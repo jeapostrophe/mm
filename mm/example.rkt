@@ -79,13 +79,17 @@
     [(_ ([b be] ...) . bb)
      (syntax/loc stx
        (let ([b (box 42)] ...)
-         (begin (set-box! b (unbox-these (b ...) be))
+         (begin (set-box! b (Mr.Gorbachev-unbox-these-identifiers! 
+                             (b ...)
+                             be))
                 ...
-                (unbox-these (b ...) 
-                             (let () . bb)))))]))
+                (Mr.Gorbachev-unbox-these-identifiers!
+                 (b ...) 
+                 (let () . bb)))))]))
 
-(define-syntax (unbox-these stx)
-  (raise-syntax-error 'unbox-these "Illegal outside mutator" stx))
+(define-syntax (Mr.Gorbachev-unbox-these-identifiers! stx)
+  (raise-syntax-error 'Mr.Gorbachev-unbox-these-identifiers!
+                      "Illegal outside mutator" stx))
 
 (begin-for-syntax
   (define-syntax-class mutator-lifted-primitive
@@ -117,7 +121,8 @@
   (define-syntax-class (mutator-expr ubs)
     #:commit
     #:attributes (stx)
-    (pattern ((~literal unbox-these) (x:id ...) e)
+    (pattern ((~literal Mr.Gorbachev-unbox-these-identifiers!)
+              (x:id ...) e)
              #:declare e (mutator-expr
                           (for/fold ([ubs ubs])
                               ([x (in-list (syntax->list #'(x ...)))])
