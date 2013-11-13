@@ -10,6 +10,7 @@
 (begin-for-syntax
   (require syntax/id-table
            racket/dict)
+  (define empty-id-table (make-immutable-free-id-table empty))
   (define mutator-macros (make-free-id-table))
 
   (define-syntax-class mutator-macro
@@ -138,9 +139,8 @@
     (pattern (prim:mutator-lifted-primitive
               (~var arg (mutator-expr ubs)) ...)
              #:attr stx
-             ;; xxx allocate the result
              (syntax/loc this-syntax
-               (prim (atomic-deref arg.stx) ...)))
+               (atomic-allocate (prim (atomic-deref arg.stx) ...))))
     (pattern (prim:mutator-primitive
               (~var arg (mutator-expr ubs)) ...)
              #:attr stx
@@ -278,11 +278,11 @@
 ;; Lambda lifting and closure conversion for cps output
 (begin-for-syntax
   (define (list->id-set ks)
-    (make-immutable-free-id-table
-     (for/list ([k (in-list ks)])
-       (cons k #t))))
+    (for/fold ([ids empty-id-table])
+        ([k (in-list ks)])
+      (dict-set ids k #t)))
   (define (id-set-union ids-l)
-    (for*/fold ([all-ids (make-immutable-free-id-table empty)])
+    (for*/fold ([all-ids empty-id-table])
         ([next-ids (in-list ids-l)]
          [next-id (in-dict-keys next-ids)])
       (dict-set all-ids next-id #t)))
@@ -352,7 +352,7 @@
 (define-syntax (mutator stx)
   (syntax-parse stx
     [(_ . p)
-     #:with ((~var m (mutator-program (make-immutable-free-id-table empty)))) #'p
+     #:with ((~var m (mutator-program empty-id-table))) #'p
      #:with (~var c (cps-expr #'stack-exit)) #'m.stx
      #:with l:lift-expr #'c.stx
      #:with l-output #'(lifted l.lambdas l.stx)
@@ -361,7 +361,7 @@
          ;; (pretty-print '(raw: p))
          ;; (pretty-print '(mutator: m.stx))
          ;; (pretty-print '(cps: c.stx))
-         ;; (pretty-print '(lift: l-output))
+         (pretty-print '(lift: l-output))
          l-output))]))
 
 (define-syntax-rule
