@@ -3,8 +3,9 @@
                      syntax/parse
                      racket/list
                      racket/syntax)
+         (prefix-in racket: racket/base)
          racket/stxparam
-         racket/list)
+         (except-in racket/list cons?))
 
 ;; Mutator Source Language (Scheme-like) compiler to use allocator
 (begin-for-syntax
@@ -122,12 +123,20 @@
              #:when (dict-ref mutator-lifted-primitives #'x #f)))
 
   (define mutator-primitives
-    (id-set [unbox box-deref]
+    (id-set [box? box?]
+            [unbox box-deref]
             [box box-allocate]
             [set-box! box-set!]
+            [cons? cons?]
             [cons cons-allocate]
             [first cons-first]
-            [rest cons-rest]))
+            [rest cons-rest]
+            [set-first! con-set-first!]
+            [set-rest! con-set-rest!]
+            [car cons-first]
+            [cdr cons-rest]
+            [set-car! con-set-first!]
+            [set-cdr! con-set-rest!]))
   (define-syntax-class mutator-primitive
     #:commit
     #:attributes (rewrite)
@@ -366,6 +375,9 @@
          (pretty-print '(lift: l-output))
          l-output))]))
 
+(define (stack-exit v)
+  v)
+
 ;; Uses
 (struct clo (code-ptr free-vars) #:transparent)
 
@@ -379,20 +391,30 @@
 
 (define (initialize)
   (void))
-(define (stack-exit v)
-  v)
+
 (define (closure-allocate f . fvs)
   (clo f fvs))
+
 (define (atomic-allocate x k)
   (closure-apply k x))
 (define (atomic-deref x k)
   (closure-apply k x))
+
+(define (cons? c k)
+  (closure-apply k (mpair? c)))
 (define (cons-first c k)
-  (closure-apply k (first c)))
+  (closure-apply k (mcar c)))
 (define (cons-rest c k)
-  (closure-apply k (rest c)))
+  (closure-apply k (mcdr c)))
 (define (cons-allocate f r k)
-  (closure-apply k (cons f r)))
+  (closure-apply k (mcons f r)))
+(define (cons-set-first! c v k)
+  (closure-apply k (set-mcar! c v)))
+(define (cons-set-rest! c v k)
+  (closure-apply k (set-mcdr! c v)))
+
+(define (box? b k)
+  (closure-apply k (racket:box? b)))
 (define (box-deref b k)
   (closure-apply k (unbox b)))
 (define (box-allocate v k)
@@ -400,7 +422,6 @@
 (define (box-set! b v k)
   (closure-apply k (set-box! b v)))
 
-;; xxx add cons? box? atomic? set-first! set-rest!
 ;; xxx test first with gvector
 ;; xxx add parameterize interface to GC
 
