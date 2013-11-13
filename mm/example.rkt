@@ -130,6 +130,7 @@
              #:attr stx
              (quasisyntax/loc this-syntax
                (if c.stx t.stx f.stx)))
+    ;; xxx this should turn into set-box and error if x is not in ubs
     (pattern ((~literal set!) x:id
               (~var arg (mutator-expr ubs)))
              #:attr stx
@@ -444,7 +445,8 @@
   (check-mutator (begin))
   (check-mutator (begin 1))
   (check-mutator (begin 1 2))
-  (check-mutator (let ([x 1]) (set! x 2) x))
+  ;; xxx this is broken
+  (check-mutator (let ([x 1]) (set! x 2) x)) 'should-be 2
   (check-mutator (letrec ([x 1]) x))
   (check-mutator (empty? '()))
   (check-mutator (empty? 1))
