@@ -11,6 +11,26 @@
   (require syntax/id-table
            racket/dict)
   (define empty-id-table (make-immutable-free-id-table empty))
+  (define-syntax-rule (id-set [k v] ...)
+    (make-immutable-free-id-table (list (cons #'k #'v) ...)))
+
+  (define (list->id-set ks)
+    (for/fold ([ids empty-id-table])
+        ([k (in-list (if (syntax? ks) (syntax->list ks) ks))])
+      (dict-set ids k #t)))
+  (define (id-set-union ids-l)
+    (for*/fold ([all-ids empty-id-table])
+        ([next-ids (in-list ids-l)]
+         [next-id (in-dict-keys next-ids)])
+      (dict-set all-ids next-id #t)))
+  (define (id-set->list ids)
+    (for/list ([k (in-dict-keys ids)])
+      k))
+  (define (id-set-remove ids lst)
+    (for/fold ([ids ids])
+        ([k (in-list (if (syntax? lst) (syntax->list lst) lst))])
+      (dict-remove ids k)))
+
   (define mutator-macros (make-free-id-table))
 
   (define-syntax-class mutator-macro
@@ -80,12 +100,12 @@
     [(_ ([b be] ...) . bb)
      (syntax/loc stx
        (let ([b (box 42)] ...)
-         (begin (set-box! b (Mr.Gorbachev-unbox-these-identifiers! 
+         (begin (set-box! b (Mr.Gorbachev-unbox-these-identifiers!
                              (b ...)
                              be))
                 ...
                 (Mr.Gorbachev-unbox-these-identifiers!
-                 (b ...) 
+                 (b ...)
                  (let () . bb)))))]))
 
 (define-syntax (Mr.Gorbachev-unbox-these-identifiers! stx)
@@ -93,31 +113,28 @@
                       "Illegal outside mutator" stx))
 
 (begin-for-syntax
+  (define mutator-lifted-primitives
+    (list->id-set #'(+ - * / add1 sub1 empty?)))
+
   (define-syntax-class mutator-lifted-primitive
     #:commit
-    (pattern (~literal +))
-    (pattern (~literal -))
-    (pattern (~literal *))
-    (pattern (~literal /))
-    (pattern (~literal add1))
-    (pattern (~literal sub1))
-    (pattern (~literal empty?)))
+    (pattern x:id
+             #:when (dict-ref mutator-lifted-primitives #'x #f)))
 
+  (define mutator-primitives
+    (id-set [unbox box-deref]
+            [box box-allocate]
+            [set-box! box-set!]
+            [cons cons-allocate]
+            [first cons-first]
+            [rest cons-rest]))
   (define-syntax-class mutator-primitive
     #:commit
     #:attributes (rewrite)
-    (pattern (~literal unbox)
-             #:attr rewrite #'box-deref)
-    (pattern (~literal box)
-             #:attr rewrite #'box-allocate)
-    (pattern (~literal set-box!)
-             #:attr rewrite #'box-set!)
-    (pattern (~literal cons)
-             #:attr rewrite #'cons-allocate)
-    (pattern (~literal first)
-             #:attr rewrite #'cons-first)
-    (pattern (~literal rest)
-             #:attr rewrite #'cons-rest))
+    (pattern x:id
+             #:do [(define r (dict-ref mutator-primitives #'x #f))]
+             #:when r
+             #:attr rewrite r))
 
   (define-syntax-class (mutator-expr ubs)
     #:commit
@@ -252,7 +269,7 @@
                 (λ (c-id)
                   (if c-id
                     cps-t.stx
-                    cps-f.stx)))))    
+                    cps-f.stx)))))
     (pattern x:id
              #:attr stx
              (quasisyntax/loc this-syntax
@@ -277,31 +294,13 @@
 
 ;; Lambda lifting and closure conversion for cps output
 (begin-for-syntax
-  (define (list->id-set ks)
-    (for/fold ([ids empty-id-table])
-        ([k (in-list ks)])
-      (dict-set ids k #t)))
-  (define (id-set-union ids-l)
-    (for*/fold ([all-ids empty-id-table])
-        ([next-ids (in-list ids-l)]
-         [next-id (in-dict-keys next-ids)])
-      (dict-set all-ids next-id #t)))
-  (define (id-set->list ids)
-    (for/list ([k (in-dict-keys ids)])
-      k))
-  (define (id-set-remove ids lst)
-    (for/fold ([ids ids]) ([k (in-list (syntax->list lst))])
-      (dict-remove ids k)))
-
-  ;; xxx merge with primitives so I don't need to write it twice
   (define lift-globals
-    #'(stack-exit
-       box-set! box-allocate box-deref
-       cons-first cons-rest cons-allocate
-       atomic-allocate atomic-deref
-       add1 sub1 empty?
-       empty void
-       + * / -))
+    (id-set-union
+     (list
+      mutator-lifted-primitives
+      mutator-primitives
+      (list->id-set
+       #'(stack-exit atomic-allocate atomic-deref empty void)))))
 
   (define-syntax-class lift-expr
     #:attributes (stx lambdas ids)
@@ -314,15 +313,16 @@
                 . body.lambdas)
              #:attr stx
              (syntax/loc this-syntax
-               (closure-allocate λ-id fv ...)))    
+               (closure-allocate λ-id fv ...)))
     (pattern ((~literal if) ca:cps-atom t:lift-expr f:lift-expr)
              #:attr ids
-             (id-set-union (list
-                            (id-set-remove
-                             (list->id-set (attribute ca.ids))
-                             lift-globals)
-                            (attribute t.ids)
-                            (attribute f.ids)))
+             (id-set-union
+              (list
+               (id-set-remove
+                (list->id-set (attribute ca.ids))
+                (id-set->list lift-globals))
+               (attribute t.ids)
+               (attribute f.ids)))
              #:with (t-l ...) #'t.lambdas
              #:with (f-l ...) #'f.lambdas
              #:attr lambdas
@@ -334,7 +334,7 @@
              #:attr ids
              (id-set-remove
               (list->id-set (attribute x.ids))
-              lift-globals)
+              (id-set->list lift-globals))
              #:attr lambdas #'()
              #:attr stx this-syntax)
     (pattern (kont-user:lift-expr kont:lift-expr ...)
@@ -355,7 +355,9 @@
      #:with ((~var m (mutator-program empty-id-table))) #'p
      #:with (~var c (cps-expr #'stack-exit)) #'m.stx
      #:with l:lift-expr #'c.stx
-     #:with l-output #'(lifted l.lambdas l.stx)
+     #:with l-output #'(letrec l.lambdas
+                         (initialize)
+                         l.stx)
      (syntax/loc stx
        (begin
          ;; (pretty-print '(raw: p))
@@ -363,12 +365,6 @@
          ;; (pretty-print '(cps: c.stx))
          (pretty-print '(lift: l-output))
          l-output))]))
-
-(define-syntax-rule
-  (lifted ([lam lam-body] ...)
-          body)
-  (letrec ([lam lam-body] ...)
-    body))
 
 ;; Uses
 (struct clo (code-ptr free-vars) #:transparent)
@@ -381,7 +377,9 @@
      args)
     (apply c args)))
 
-(define (stack-exit v) 
+(define (initialize)
+  (void))
+(define (stack-exit v)
   v)
 (define (closure-allocate f . fvs)
   (clo f fvs))
@@ -399,7 +397,7 @@
   (closure-apply k (unbox b)))
 (define (box-allocate v k)
   (closure-apply k (box v)))
-(define (box-set! b v k) 
+(define (box-set! b v k)
   (closure-apply k (set-box! b v)))
 
 ;; xxx add cons? box? atomic? set-first! set-rest!
