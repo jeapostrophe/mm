@@ -81,8 +81,8 @@
        (let ([b (box 42)] ...)
          (begin (set-box! b (unbox-these (b ...) be))
                 ...
-                (let ([b (unbox b)] ...)
-                  . bb))))]))
+                (unbox-these (b ...) 
+                             (let () . bb)))))]))
 
 (define-syntax (unbox-these stx)
   (raise-syntax-error 'unbox-these "Illegal outside mutator" stx))
@@ -399,10 +399,11 @@
             (clo-free-vars c))
      args)
     (apply c args)))
+
+(define (stack-exit v) 
+  v)
 (define (closure-allocate f . fvs)
   (clo f fvs))
-
-(define (stack-exit v) v)
 (define (atomic-allocate x k)
   (closure-apply k x))
 (define (atomic-deref x k)
