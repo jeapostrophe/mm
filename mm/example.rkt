@@ -233,14 +233,6 @@
              #:attr stx
              (syntax/loc this-syntax
                (λ (x ...) p.stx)))
-    (pattern (~literal empty)
-             #:attr stx
-             (syntax/loc this-syntax
-               (atomic-allocate empty)))
-    (pattern ((~literal void))
-             #:attr stx
-             (syntax/loc this-syntax
-               (atomic-allocate (void))))
     (pattern x:identifier
              #:attr stx
              (if (dict-ref ubs #'x #f)
@@ -251,7 +243,9 @@
                      (unbox x)))
                  (attribute ux.stx))
                #'x))
-    (pattern (~or x:number x:boolean x:str (~and x ((~literal quote) y:id)))
+    (pattern (~or x:number x:boolean x:str (~and x ((~literal quote) y:id))
+                  (~and x (~literal empty))
+                  (~and x ((~literal void))))
              #:attr stx
              (syntax/loc this-syntax
                (atomic-allocate x)))
@@ -259,6 +253,7 @@
              #:with (~var e (mutator-expr ubs)) ((attribute m.expander) this-syntax)
              #:attr stx #'e.stx)
     (pattern ((~and (~not (~or (~literal if)
+                               (~literal Mr.Gorbachev-unbox-these-identifiers!)
                                p:mutator-primitive p:mutator-lifted-primitive
                                (~literal λ)
                                (~literal empty) (~literal void) (~literal define)
