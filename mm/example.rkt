@@ -130,15 +130,10 @@
              #:attr stx
              (quasisyntax/loc this-syntax
                (if c.stx t.stx f.stx)))
-    ;; xxx this should turn into set-box and error if x is not in ubs
-    (pattern ((~literal set!) x:id
-              (~var arg (mutator-expr ubs)))
-             #:attr stx
-             (syntax/loc this-syntax
-               (set! x arg.stx)))
     (pattern (prim:mutator-lifted-primitive
               (~var arg (mutator-expr ubs)) ...)
              #:attr stx
+             ;; xxx allocate the result
              (syntax/loc this-syntax
                (prim (atomic-deref arg.stx) ...)))
     (pattern (prim:mutator-primitive
@@ -180,7 +175,7 @@
     (pattern (m:mutator-macro . body)
              #:with (~var e (mutator-expr ubs)) ((attribute m.expander) this-syntax)
              #:attr stx #'e.stx)
-    (pattern ((~and (~not (~or (~literal if) (~literal set!)
+    (pattern ((~and (~not (~or (~literal if)
                                p:mutator-primitive p:mutator-lifted-primitive
                                (~literal λ)
                                (~literal empty) (~literal void) (~literal define)
@@ -252,20 +247,7 @@
                 (λ (c-id)
                   (if c-id
                     cps-t.stx
-                    cps-f.stx)))))
-    (pattern ((~literal set!) x:id v:cps-atom)
-             #:attr stx
-             (quasisyntax/loc this-syntax
-               (#,k (set! x v))))
-    (pattern ((~literal set!) x:id e)
-             #:with e-k (generate-temporary 'set!-k)
-             #:with (~var cps-e (cps-expr #'e-k)) #'e
-             #:with e-id (generate-temporary 'set!-id)
-             #:with (~var cps-b (cps-expr k)) #'(set! x e-id)
-             #:attr stx
-             (syntax/loc this-syntax
-               ((λ (e-k) cps-e.stx)
-                (λ (e-id) cps-b.stx))))
+                    cps-f.stx)))))    
     (pattern x:id
              #:attr stx
              (quasisyntax/loc this-syntax
@@ -327,14 +309,7 @@
                 . body.lambdas)
              #:attr stx
              (syntax/loc this-syntax
-               (closure-allocate λ-id fv ...)))
-    (pattern ((~literal set!) x:id a:cps-atom)
-             #:attr ids
-             (id-set-remove
-              (list->id-set (cons #'x (attribute a.ids)))
-              lift-globals)
-             #:attr lambdas #'()
-             #:attr stx this-syntax)
+               (closure-allocate λ-id fv ...)))    
     (pattern ((~literal if) ca:cps-atom t:lift-expr f:lift-expr)
              #:attr ids
              (id-set-union (list
@@ -423,7 +398,10 @@
   (closure-apply k (set-box! b v)))
 
 ;; xxx add cons? box? atomic? set-first! set-rest!
+;; xxx test first with gvector
 ;; xxx add parameterize interface to GC
+
+;; xxx look at gc2 mutator for other functions, like equal? eq? testing
 
 (module+ test
   (define-syntax-rule (check-mutator . e)
@@ -445,8 +423,7 @@
   (check-mutator (begin))
   (check-mutator (begin 1))
   (check-mutator (begin 1 2))
-  ;; xxx this is broken
-  (check-mutator (let ([x 1]) (set! x 2) x)) 'should-be 2
+  (check-mutator (let ([x (box 1)]) (set-box! x 2) (unbox x)))
   (check-mutator (letrec ([x 1]) x))
   (check-mutator (empty? '()))
   (check-mutator (empty? 1))
