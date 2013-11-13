@@ -4,6 +4,7 @@
                      racket/list
                      racket/syntax)
          (prefix-in racket: racket/base)
+         racket/bool
          racket/stxparam
          (except-in racket/list cons?))
 
@@ -51,6 +52,58 @@
        (begin-for-syntax
          (dict-set! mutator-macros #'id
                     (λ (stx-id) body))))]))
+
+(define-mutator-macro (test stx)
+  (syntax-parse stx
+    [(_ lhs rhs)
+     (syntax/loc stx
+       (let ([lhs-v lhs] [rhs-v rhs])
+         (unless (equal? lhs-v rhs-v)
+           (error 'test "not equal: ~e and ~e" lhs-v rhs-v))))]))
+
+(define-mutator-macro (and stx)
+  (syntax-parse stx
+    [(_)
+     (syntax/loc stx #t)]
+    [(_ e)
+     (syntax/loc stx e)]
+    [(_ e . more)
+     (syntax/loc stx (if e (and . more) #f))]))
+
+(define-mutator-macro (when stx)
+  (syntax-parse stx
+    [(_ t . b)
+     (syntax/loc stx
+       (if t (let () . b) (void)))]))
+
+(define-mutator-macro (unless stx)
+  (syntax-parse stx
+    [(_ t . b)
+     (syntax/loc stx
+       (when (not t) . b))]))
+
+(define-mutator-macro (or stx)
+  (syntax-parse stx
+    [(_)
+     (syntax/loc stx #f)]
+    [(_ e)
+     (syntax/loc stx e)]
+    [(_ e . more)
+     (syntax/loc stx (let ([t e]) (if t t (or . more))))]))
+
+(define-mutator-macro (cond stx)
+  (syntax-parse stx
+    [(cond)
+     (syntax/loc stx
+       (void))]
+    [(cond [(~literal else) . b])
+     (syntax/loc stx
+       (let () . b))]
+    [(cond [c . b] . more)
+     (syntax/loc stx
+       (if c
+         (let () . b)
+         (cond . more)))]))
 
 (define-mutator-macro (quote stx)
   (syntax-parse stx
@@ -115,7 +168,8 @@
 
 (begin-for-syntax
   (define mutator-lifted-primitives
-    (list->id-set #'(+ - * / add1 sub1 empty?)))
+    (list->id-set #'(+ - * / add1 sub1 empty? even? odd? = < > <= >= zero?
+                       not error printf symbol=? string=? number? boolean?)))
 
   (define-syntax-class mutator-lifted-primitive
     #:commit
@@ -123,7 +177,9 @@
              #:when (dict-ref mutator-lifted-primitives #'x #f)))
 
   (define mutator-primitives
-    (id-set [box? box?]
+    (id-set [eq? address=?]
+            [equal? mutator-equal?]
+            [box? box?]
             [unbox box-deref]
             [box box-allocate]
             [set-box! box-set!]
@@ -195,14 +251,10 @@
                      (unbox x)))
                  (attribute ux.stx))
                #'x))
-    (pattern n:number
+    (pattern (~or x:number x:boolean x:str (~and x ((~literal quote) y:id)))
              #:attr stx
              (syntax/loc this-syntax
-               (atomic-allocate n)))
-    (pattern b:boolean
-             #:attr stx
-             (syntax/loc this-syntax
-               (atomic-allocate b)))
+               (atomic-allocate x)))
     (pattern (m:mutator-macro . body)
              #:with (~var e (mutator-expr ubs)) ((attribute m.expander) this-syntax)
              #:attr stx #'e.stx)
@@ -247,9 +299,7 @@
     #:commit
     (pattern x:id
              #:attr ids (list #'x))
-    (pattern n:number
-             #:attr ids empty)
-    (pattern b:boolean
+    (pattern (~or n:number b:boolean s:str ((~literal quote) x:id))
              #:attr ids empty)
     (pattern (~literal empty)
              #:attr ids (list #'empty))
@@ -295,11 +345,15 @@
              #:with middle-k (generate-temporary 'app-k)
              #:with (~var cps-middle (cps-expr #'middle-k)) #'middle
              #:with middle-id (generate-temporary 'app-id)
-             #:with (~var cps-b (cps-expr k)) #'(before ... middle-id after ...)
-             #:attr stx
+             #:with (~var cps-b (cps-expr k))
              (syntax/loc this-syntax
-               ((λ (middle-k) cps-middle.stx)
-                (λ (middle-id) cps-b.stx))))))
+               (before ... middle-id after ...))
+             #:attr stx
+             (quasisyntax/loc this-syntax
+               (#,(quasisyntax/loc this-syntax
+                    (λ (middle-k) cps-middle.stx))
+                #,(quasisyntax/loc this-syntax
+                    (λ (middle-id) cps-b.stx)))))))
 
 ;; Lambda lifting and closure conversion for cps output
 (begin-for-syntax
@@ -318,11 +372,15 @@
              #:attr ids (id-set-remove (attribute body.ids) #'(λ-id x ...))
              #:with (fv ...) (id-set->list (attribute ids))
              #:attr lambdas
-             #'([λ-id (λ (fv ...) (λ (x ...) body.stx))]
+             #`([λ-id
+                 #,(quasisyntax/loc this-syntax
+                     (λ (fv ...)
+                       #,(quasisyntax/loc this-syntax
+                           (λ (x ...) body.stx))))]
                 . body.lambdas)
              #:attr stx
              (syntax/loc this-syntax
-               (closure-allocate λ-id fv ...)))
+               (closure-allocate λ-id (list fv ...))))
     (pattern ((~literal if) ca:cps-atom t:lift-expr f:lift-expr)
              #:attr ids
              (id-set-union
@@ -372,11 +430,18 @@
          ;; (pretty-print '(raw: p))
          ;; (pretty-print '(mutator: m.stx))
          ;; (pretty-print '(cps: c.stx))
-         (pretty-print '(lift: l-output))
+         ;; (pretty-print '(lift: l-output))
          l-output))]))
 
 (define (stack-exit v)
   v)
+;; xxx allocate?
+(define (address=? x y k)
+  (closure-apply k (= x y)))
+;; xxx allocate?
+(define (mutator-equal? x y k)
+  ;; xxx really should walk these pointers
+  (closure-apply k (equal? x y)))
 
 ;; Uses
 (struct clo (code-ptr free-vars) #:transparent)
@@ -392,7 +457,7 @@
 (define (initialize)
   (void))
 
-(define (closure-allocate f . fvs)
+(define (closure-allocate f fvs)
   (clo f fvs))
 
 (define (atomic-allocate x k)
@@ -401,6 +466,7 @@
   (closure-apply k x))
 
 (define (cons? c k)
+  ;; xxx allocate?
   (closure-apply k (mpair? c)))
 (define (cons-first c k)
   (closure-apply k (mcar c)))
@@ -414,6 +480,7 @@
   (closure-apply k (set-mcdr! c v)))
 
 (define (box? b k)
+  ;; xxx allocate?
   (closure-apply k (racket:box? b)))
 (define (box-deref b k)
   (closure-apply k (unbox b)))
@@ -425,9 +492,9 @@
 ;; xxx test first with gvector
 ;; xxx add parameterize interface to GC
 
-;; xxx look at gc2 mutator for other functions, like equal? eq? testing
-
 (module+ test
+  (require rackunit/chk)
+
   (define-syntax-rule (check-mutator . e)
     (mutator . e))
 
@@ -475,4 +542,45 @@
   (check-mutator (* 1 2))
   (check-mutator (/ 1 2))
   (check-mutator (sub1 2))
-  (check-mutator (add1 2)))
+  (check-mutator (add1 2))
+  (check-mutator (and))
+  (check-mutator (and #t))
+  (check-mutator (and 1))
+  (check-mutator (and 1 2))
+  (check-mutator (or))
+  (check-mutator (or #t))
+  (check-mutator (or 1))
+  (check-mutator (or #f 1))
+  (check-mutator (or #f 1 2))
+  (check-mutator (or 1 2))
+  (check-mutator (or #f 2))
+  (check-mutator (cond))
+  (check-mutator (cond [else 1]))
+  (check-mutator (cond [#f 2] [else 1]))
+  (check-mutator (cond [2 1] [else 1]))
+  (check-mutator "string")
+  (check-mutator (string=? "string" "string"))
+  (check-mutator (string=? "string" "stringx"))
+  (check-mutator 'symbol)
+  (check-mutator (symbol=? 'symbol 'symbol))
+  (check-mutator (symbol=? 'symbol 'symbolx))
+  (check-mutator (= 1 2))
+  (check-mutator (= 1 1))
+  (check-mutator (equal? 1 1))
+  (check-mutator (equal? 1 2))
+  (check-mutator (equal? '(1 2) '(1)))
+  (check-mutator (equal? '(1 2) '(1 2)))
+  (check-mutator (printf "Hey there, ~a\n" "Jay"))
+  (chk #:exn (check-mutator (error 'test "Hey there, ~a\n" "Jay")) "Jay")
+  (chk #:exn
+       (check-mutator (define x (cons 1 2))
+                      (eq? x x))
+       "contract violation")
+  (check-mutator (not #t))
+  (check-mutator (not #f))
+  (check-mutator (when #t 1))
+  (check-mutator (when #f 1))
+  (check-mutator (unless #t 1))
+  (check-mutator (unless #f 1))
+  (check-mutator (test (+ 1 2) 3))
+  (chk #:exn (check-mutator (test (+ 1 2) 4)) "not equal"))
