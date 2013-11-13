@@ -84,6 +84,9 @@
                 (let ([b (unbox b)] ...)
                   . bb))))]))
 
+(define-syntax (unbox-these stx)
+  (raise-syntax-error 'unbox-these "Illegal outside mutator" stx))
+
 (begin-for-syntax
   (define-syntax-class mutator-lifted-primitive
     #:commit
@@ -111,26 +114,39 @@
     (pattern (~literal rest)
              #:attr rewrite #'cons-rest))
 
-  (define-syntax-class mutator-expr
+  (define-syntax-class (mutator-expr ubs)
     #:commit
     #:attributes (stx)
-    (pattern ((~literal if) c:mutator-expr t:mutator-expr f:mutator-expr)
+    (pattern ((~literal unbox-these) (x:id ...) e)
+             #:declare e (mutator-expr
+                          (for/fold ([ubs ubs])
+                              ([x (in-list (syntax->list #'(x ...)))])
+                            (dict-set ubs x #t)))
+             #:attr stx (attribute e.stx))
+    (pattern ((~literal if)
+              (~var c (mutator-expr ubs))
+              (~var t (mutator-expr ubs))
+              (~var f (mutator-expr ubs)))
              #:attr stx
              (quasisyntax/loc this-syntax
                (if c.stx t.stx f.stx)))
-    (pattern ((~literal set!) x:id arg:mutator-expr)
+    (pattern ((~literal set!) x:id
+              (~var arg (mutator-expr ubs)))
              #:attr stx
              (syntax/loc this-syntax
                (set! x arg.stx)))
-    (pattern (prim:mutator-lifted-primitive arg:mutator-expr ...)
+    (pattern (prim:mutator-lifted-primitive
+              (~var arg (mutator-expr ubs)) ...)
              #:attr stx
              (syntax/loc this-syntax
                (prim (atomic-deref arg.stx) ...)))
-    (pattern (prim:mutator-primitive arg:mutator-expr ...)
+    (pattern (prim:mutator-primitive
+              (~var arg (mutator-expr ubs)) ...)
              #:attr stx
              (syntax/loc this-syntax
                (prim.rewrite arg.stx ...)))
-    (pattern ((~literal λ) (x:id ...) p:mutator-program)
+    (pattern ((~literal λ) (x:id ...)
+              (~var p (mutator-program ubs)))
              #:attr stx
              (syntax/loc this-syntax
                (λ (x ...) p.stx)))
@@ -143,7 +159,15 @@
              (syntax/loc this-syntax
                (atomic-allocate (void))))
     (pattern x:identifier
-             #:attr stx #'x)
+             #:attr stx
+             (if (dict-ref ubs #'x #f)
+               (let ()
+                 (define/syntax-parse
+                   (~var ux (mutator-expr (dict-remove ubs #'x)))
+                   (syntax/loc this-syntax
+                     (unbox x)))
+                 (attribute ux.stx))
+               #'x))
     (pattern n:number
              #:attr stx
              (syntax/loc this-syntax
@@ -153,39 +177,40 @@
              (syntax/loc this-syntax
                (atomic-allocate b)))
     (pattern (m:mutator-macro . body)
-             #:with e:mutator-expr ((attribute m.expander) this-syntax)
+             #:with (~var e (mutator-expr ubs)) ((attribute m.expander) this-syntax)
              #:attr stx #'e.stx)
     (pattern ((~and (~not (~or (~literal if) (~literal set!)
                                p:mutator-primitive p:mutator-lifted-primitive
                                (~literal λ)
                                (~literal empty) (~literal void) (~literal define)
                                m:mutator-macro))
-                    fun:mutator-expr)
-              arg:mutator-expr ...)
+                    (~var fun (mutator-expr ubs)))
+              (~var arg (mutator-expr ubs))
+              ...)
              #:attr stx
              (syntax/loc this-syntax
                (fun.stx arg.stx ...))))
 
-  (define-splicing-syntax-class mutator-program
+  (define-splicing-syntax-class (mutator-program ubs)
     #:commit
     #:attributes (stx)
     (pattern (~seq ((~literal define) x:id e) p ...)
-             #:with b:mutator-expr
+             #:with (~var b (mutator-expr ubs))
              (syntax/loc #'x
                (letrec ([x e]) p ...))
              #:attr stx #'b.stx)
     (pattern (~seq ((~literal define) (x:id arg:id ...) . e) p ...)
-             #:with (b:mutator-program)
+             #:with ((~var b (mutator-program ubs)))
              (syntax/loc #'x
                ((define x (λ (arg ...) . e)) p ...))
              #:attr stx #'b.stx)
     (pattern (~seq e p ...)
-             #:with b:mutator-expr
+             #:with (~var b (mutator-expr ubs))
              (syntax/loc #'e
                (let ([ignored e]) p ...))
              #:attr stx #'b.stx)
     (pattern (~seq e)
-             #:with b:mutator-expr #'e
+             #:with (~var b (mutator-expr ubs)) #'e
              #:attr stx #'b.stx)))
 
 ;; CPS Transform for mutator language compilation output
@@ -280,9 +305,10 @@
     (for/fold ([ids ids]) ([k (in-list (syntax->list lst))])
       (dict-remove ids k)))
 
-  ;; xxx merge with primitives
+  ;; xxx merge with primitives so I don't need to write it twice
   (define lift-globals
     #'(stack-exit
+       box-set! box-allocate box-deref
        cons-first cons-rest cons-allocate
        atomic-allocate atomic-deref
        add1 sub1 empty?
@@ -345,7 +371,7 @@
 (define-syntax (mutator stx)
   (syntax-parse stx
     [(_ . p)
-     #:with (m:mutator-program) #'p
+     #:with ((~var m (mutator-program (make-immutable-free-id-table empty)))) #'p
      #:with (~var c (cps-expr #'stack-exit)) #'m.stx
      #:with l:lift-expr #'c.stx
      #:with l-output #'(lifted l.lambdas l.stx)
@@ -363,20 +389,39 @@
   (letrec ([lam lam-body] ...)
     body))
 
-(define (closure-apply f . args)
-  (apply f args))
+;; Uses
+(struct clo (code-ptr free-vars) #:transparent)
+
+(define (closure-apply c . args)
+  (if (clo? c)
+    (apply
+     (apply (clo-code-ptr c)
+            (clo-free-vars c))
+     args)
+    (apply c args)))
 (define (closure-allocate f . fvs)
-  (apply f fvs))
+  (clo f fvs))
 
 (define (stack-exit v) v)
-(define (atomic-allocate x k) (k x))
-(define (atomic-deref x k) (k x))
-(define (cons-first c k) (k (first c)))
-(define (cons-rest c k) (k (rest c)))
-(define (cons-allocate f r k) (k (cons f r)))
-(define (box-deref b k) (k (unbox b)))
-(define (box-allocate v k) (k (box v)))
-(define (box-set! b v k) (k (set-box! b v)))
+(define (atomic-allocate x k)
+  (closure-apply k x))
+(define (atomic-deref x k)
+  (closure-apply k x))
+(define (cons-first c k)
+  (closure-apply k (first c)))
+(define (cons-rest c k)
+  (closure-apply k (rest c)))
+(define (cons-allocate f r k)
+  (closure-apply k (cons f r)))
+(define (box-deref b k)
+  (closure-apply k (unbox b)))
+(define (box-allocate v k)
+  (closure-apply k (box v)))
+(define (box-set! b v k) 
+  (closure-apply k (set-box! b v)))
+
+;; xxx add cons? box? atomic? set-first! set-rest!
+;; xxx add parameterize interface to GC
 
 (module+ test
   (define-syntax-rule (check-mutator . e)
