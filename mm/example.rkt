@@ -225,32 +225,26 @@
               (~var f (mutator-expr ubs)))
              #:attr stx
              (quasisyntax/loc this-syntax
-               (cps-apply
-                (cps-lambda (c-id) (if c-id t.stx f.stx))
-                c.stx)))
+               (mutator-if c.stx t.stx f.stx)))
     (pattern (prim:mutator-lifted-primitive (~var arg (mutator-expr ubs)) ...)
              #:attr stx
              (syntax/loc this-syntax
-               (cps-apply
-                atomic-allocate
-                (real-apply prim
-                            (cps-apply atomic-deref arg.stx)
-                            ...))))
+               (mutator-lifted-primitive prim (list arg.stx ...))))
     (pattern (prim:mutator-primitive (~var arg (mutator-expr ubs)) ...)
              #:attr stx
              (syntax/loc this-syntax
-               (cps-apply prim.rewrite arg.stx ...)))
+               (mutator-primitive 'prim.rewrite (list arg.stx ...))))
     (pattern ((~literal λ) (x:id ...)
               (~var p (mutator-program ubs)))
              #:attr stx
              (syntax/loc this-syntax
-               (cps-lambda (x ...) p.stx)))
+               (mutator-lambda (list #'x ...) p.stx)))
     (pattern (~or x:number x:boolean x:str (~and x ((~literal quote) y:id))
                   (~and x (~literal empty))
                   (~and x ((~literal void))))
              #:attr stx
              (syntax/loc this-syntax
-               (cps-apply atomic-allocate x)))
+               (mutator-atomic x)))
     (pattern x:identifier
              #:attr stx
              (if (dict-ref ubs #'x #f)
@@ -258,9 +252,10 @@
                  (define/syntax-parse
                    (~var ux (mutator-expr (dict-remove ubs #'x)))
                    (syntax/loc this-syntax
-                     (cps-apply unbox x)))
+                     (unbox x)))
                  (attribute ux.stx))
-               #'x))
+               (syntax/loc this-syntax
+                 (mutator-id #'x))))
     (pattern (m:mutator-macro . body)
              #:with mac-out ((attribute m.expander) this-syntax)
              #:with (~var e (mutator-expr ubs)) #'mac-out
@@ -270,7 +265,7 @@
               (~var arg (mutator-expr ubs)) ...)
              #:attr stx
              (syntax/loc this-syntax
-               (cps-apply fun.stx arg.stx ...))))
+               (mutator-apply fun.stx (list arg.stx ...)))))
 
   (define-splicing-syntax-class (mutator-program ubs)
     #:commit
@@ -294,170 +289,24 @@
              #:with (~var b (mutator-expr ubs)) #'e
              #:attr stx #'b.stx)))
 
-;; CPS Transform for mutator language compilation output
-(begin-for-syntax
-  (define-syntax-class cps-atom
-    #:attributes (ids)
-    #:commit
-    (pattern x:id
-             #:attr ids (list #'x))
-    (pattern (~or n:number b:boolean s:str ((~literal quote) x:id))
-             #:attr ids empty)
-    (pattern (~literal empty)
-             #:attr ids (list #'empty))
-    (pattern ((~literal void))
-             #:attr ids (list #'void)))
-
-  (define-syntax-class (cps-expr k)
-    #:commit
-    #:attributes (stx)
-    (pattern ((~literal cps-lambda) (arg:id ...) body)
-             #:with dyn-k (generate-temporary 'λ-k)
-             #:with (~var cps-body (cps-expr #'dyn-k)) #'body
-             #:attr stx
-             (quasisyntax/loc this-syntax
-               (real-apply
-                #,k
-                (real-lambda (arg ... dyn-k)
-                             cps-body.stx))))
-    (pattern ((~literal if) c:id t f)
-             #:with (~var cps-t (cps-expr k)) #'t
-             #:with (~var cps-f (cps-expr k)) #'f
-             #:attr stx
-             (syntax/loc this-syntax
-               (if c cps-t.stx cps-f.stx)))
-    (pattern x:id
-             #:attr stx
-             (quasisyntax/loc this-syntax
-               (real-apply #,k x)))
-    (pattern ((~literal real-apply) fun:mutator-lifted-primitive arg:cps-atom ...)
-             #:attr stx
-             (quasisyntax/loc this-syntax
-               (real-apply #,k (real-apply fun arg ...))))
-    (pattern ((~literal cps-apply) fun:cps-atom arg:cps-atom ...)
-             #:attr stx
-             (quasisyntax/loc this-syntax
-               (real-apply fun arg ... #,k)))
-    ;; xxx this stops the infinite loop
-    (pattern ((~literal cps-apply) ((~literal cps-lambda) (x:id) fun-body) arg)
-             ;; #:do [(displayln (syntax->datum this-syntax))]
-             #:attr stx
-             (quasisyntax/loc this-syntax
-               #;(closure-allocate
-               (λ (x) fun-body)
-
-               (closure-allocate
-               (λ (arg-k)
-               arg returns to arg-k)
-               ...))
-
-
-
-               'fail))
-    (pattern ((~and kind-of-apply
-                    (~or (~literal real-apply)
-                         (~literal cps-apply)))
-              before:cps-atom ... middle:expr after ...)
-             #:with app-id (generate-temporary 'app-id)
-             #:with (~var cps-e (cps-expr k))
-             (syntax/loc this-syntax
-               (cps-apply
-                (cps-lambda (app-id)
-                            (kind-of-apply before ... app-id after ...))
-                middle))
-             #:attr stx #'cps-e.stx)))
-
-;; Lambda lifting and closure conversion for cps output
-(begin-for-syntax
-  (define mutator-rewritten-primitives
-    (id-set-union
-     (list (list->id-set
-            (for/list ([k (in-dict-values mutator-primitives)])
-              k))
-           (list->id-set
-            #'(atomic-allocate atomic-deref)))))
-
-  (define lift-globals
-    (id-set-union
-     (list
-      mutator-lifted-primitives
-      mutator-rewritten-primitives
-      (list->id-set
-       #'(empty void)))))
-
-  (define-syntax-class lift-expr
-    #:attributes (stx lambdas ids)
-    (pattern ((~literal real-lambda) (x:id ...) body:lift-expr)
-             #:with λ-id (generate-temporary 'λ-id)
-             #:attr ids (id-set-remove (attribute body.ids) #'(λ-id x ...))
-             #:with (fv ...) (id-set->list (attribute ids))
-             #:attr lambdas
-             #`([λ-id
-                 #,(quasisyntax/loc this-syntax
-                     (λ (fv ...)
-                       #,(quasisyntax/loc this-syntax
-                           (λ (x ...) body.stx))))]
-                . body.lambdas)
-             #:attr stx
-             (syntax/loc this-syntax
-               (closure-allocate λ-id (list fv ...) 'xxx)))
-    (pattern ((~literal if) ca:cps-atom t:lift-expr f:lift-expr)
-             #:attr ids
-             (id-set-union
-              (list
-               (id-set-remove
-                (list->id-set (attribute ca.ids))
-                (id-set->list lift-globals))
-               (attribute t.ids)
-               (attribute f.ids)))
-             #:with (t-l ...) #'t.lambdas
-             #:with (f-l ...) #'f.lambdas
-             #:attr lambdas
-             #'(t-l ... f-l ...)
-             #:attr stx
-             (syntax/loc this-syntax
-               (if ca t.stx f.stx)))
-    (pattern x:cps-atom
-             #:attr ids
-             (id-set-remove
-              (list->id-set (attribute x.ids))
-              (id-set->list lift-globals))
-             #:attr lambdas #'()
-             #:attr stx this-syntax)
-    (pattern ((~literal real-apply) kont-user:lift-expr kont:lift-expr ...)
-             #:attr ids
-             (id-set-union (cons (attribute kont-user.ids)
-                                 (attribute kont.ids)))
-             #:with (ku-l ...) #'kont-user.lambdas
-             #:with ((k-l ...) ...) #'(kont.lambdas ...)
-             #:attr lambdas #'(ku-l ... k-l ... ...)
-             #:attr stx
-             (if (and (identifier? #'kont-user.stx)
-                      (dict-ref mutator-rewritten-primitives #'kont-user.stx #f))
-               (syntax/loc this-syntax
-                 (kont-user.stx kont.stx ...))
-               (syntax/loc this-syntax
-                 (closure-apply kont-user.stx kont.stx ...))))))
-
 (begin-for-syntax
   (require racket/pretty))
 (define-syntax (mutator stx)
   (syntax-parse stx
     [(_ . p)
-     ;; #:do [(pretty-print `(raw: ,(syntax->datum #'p)))]
+     #:do [(pretty-print `(raw: ,(syntax->datum #'p)))]
      #:with ((~var m (mutator-program empty-id-table))) #'p
-     ;; #:do [(pretty-print `(mutator: ,(syntax->datum #'m.stx)))]
-     #:with (~var c (cps-expr #'#f)) #'m.stx
-     ;; #:do [(pretty-print `(cps: ,(syntax->datum #'c.stx)))]
-     #:with l:lift-expr #'c.stx
-     #:with l-output #'(letrec l.lambdas
-                         (initialize)
-                         l.stx)
-     ;; #:do [(pretty-print `(lift: ,(syntax->datum #'l-output)))]
+     #:do [(pretty-print `(mutator: ,(syntax->datum #'m.stx)))]
      (syntax/loc stx
-       (unit
-        (import collector^) (export)
-        l-output))]))
+       m.stx)]))
+
+(struct mutator-atomic (value))
+(struct mutator-lifted-primitive (prim args))
+(struct mutator-primitive (prim-id args))
+(struct mutator-lambda (params body))
+(struct mutator-id (id))
+(struct mutator-apply (fun args))
+(struct mutator-if (test then else))
 
 (require racket/unit)
 (define-signature collector^
@@ -605,13 +454,88 @@
            (-> heap-addr? heap-addr? cont?
                any)])))
 
-(define (mutator-run collector@ mutator@)
-  (invoke-unit
-   (compound-unit
-    (import) (export)
-    (link [([C : collector^]) collector@]
-          [([CTC : collector^]) contract-collector@ C]
-          [() mutator@ CTC]))))
+(define (mutator-run collector@ me)
+  (define-values/invoke-unit
+    (compound-unit
+     (import) (export CTC)
+     (link [([C : collector^]) collector@]
+           [([CTC : collector^]) contract-collector@ C]))
+    (import) (export collector^))
+
+  (define (snoc l x)
+    (append l (list x)))
+  
+  (define (interp env me k)
+    (match me
+      [(mutator-atomic v)
+       (atomic-allocate v k)]
+      [(mutator-id id)
+       ;; xxx add good error message
+       (closure-apply k (dict-ref env id))]
+      [(mutator-lambda ids body)
+       ;; xxx look through body for free-ids
+       (closure-allocate
+        (λ free-vs
+          (define free-env
+            (for/fold ([free-env empty-env])
+                ([(k old-addr) (in-dict env)]
+                 [new-addr (in-list free-vs)])
+              (dict-set free-env k new-addr)))
+          (λ (vs dyn-k)
+            (define new-env
+              (for/fold ([new-env free-env])
+                  ([i (in-list ids)]
+                   [v (in-list vs)])
+                (dict-set new-env i v)))
+            (interp new-env body dyn-k)))
+        (for/list ([(k addr) (in-dict env)])
+          addr)
+        k)]
+      [(mutator-primitive prim-name arg-mes)
+       ;; xxx sequentialize this with continuation/closures
+       (apply
+        (match prim-name
+          ['cons-allocate cons-allocate]
+          ['cons-rest cons-rest]
+          ['cons-first cons-first]
+          ['cons-set-rest! cons-set-rest!]
+          ['cons-set-first! cons-set-first!]
+          ['box-allocate box-allocate]
+          ['box-set! box-set!]
+          ['box-deref box-deref]
+          ['address=? address=?]
+          ['mutator-equal? mutator-equal?]
+          [_
+           (error 'interp "Unknown primitive: ~e" prim-name)])
+        (snoc (map (λ (me) (interp env me k)) arg-mes)
+              k))]
+      [(mutator-lifted-primitive prim arg-mes)
+       ;; xxx sequentialize this with continuation/closures
+       (interp
+        env
+        (mutator-atomic
+         (apply
+          prim
+          (map (λ (addr) (atomic-deref addr k))
+               (map (λ (me) (interp env me k)) arg-mes))))
+        k)]
+      [(mutator-apply fun-me arg-mes)
+       ;; xxx sequentialize this with continuation/closures
+       (closure-apply (interp env fun-me k)
+                      (map (λ (me) (interp env me k)) arg-mes)
+                      k)]
+      [(mutator-if test true false)
+       ;; xxx sequentialize this with continuation/closures
+       (if (interp env test k)
+         (interp env true k)
+         (interp env false k))]))
+
+  (local-require syntax/id-table
+                 racket/dict)
+  (define empty-env
+    (make-immutable-free-id-table empty))
+
+  (interp empty-env me #f))
 
 ;; xxx test first with gvector
 ;; xxx add parameterize interface to GC
@@ -620,119 +544,170 @@
 (module+ test
   (require rackunit/chk)
 
-  ;; 1
-  (mutator-run racket-collector@
-               (unit (import collector^) (export)
-                     (initialize)
-                     (atomic-allocate 1 #f)))
-
-  ;; ((λ (x) x) 3)
-  (mutator-run racket-collector@
-               (unit (import collector^) (export)
-                     (initialize)                                         
-                     
-                     (closure-allocate (λ () (λ (x k) (closure-apply k x)))
-                                       empty
-                                       k1)
-
-                     (atomic-allocate 3 k2)
-
-                     (closure-allocate (λ))
-
-                     ))
-  (exit 0)
-
-  (define-syntax (check-mutator stx)
+  (define-syntax (chkm stx)
     (syntax-parse stx
-      [(_ . e)
+      [(_ e v)
        (quasisyntax/loc stx
-         (mutator-run racket-collector@
-                      #,(syntax/loc stx
-                          (mutator . e))))]))
+         (chk #,(syntax/loc stx (mutator-run racket-collector@ e))
+              v))]))
 
-  (check-mutator 1)
-  (check-mutator #t)
-  (check-mutator #f)
-  (check-mutator empty)
-  (check-mutator '1)
-  (check-mutator '#t)
-  (check-mutator '#f)
-  (check-mutator '())
-  (check-mutator '(1 2))
-  (check-mutator (λ (x) x))
-  (check-mutator (λ (x y) (+ x y)))
-  (check-mutator (let ([x 1]) x))
-  (check-mutator (let* ([x 1] [y x]) y))
-  (check-mutator (begin))
-  (check-mutator (begin 1))
-  (check-mutator (begin 1 2))
-  (check-mutator (let ([x (box 1)]) (set-box! x 2) (unbox x)))
-  (check-mutator (letrec ([x 1]) x))
-  (check-mutator (empty? '()))
-  (check-mutator (empty? 1))
-  (check-mutator (if #t 1 2))
-  (check-mutator (if #f 1 2))
-  (check-mutator (letrec ([len
+  (chkm (mutator 1)
+        1)
+  (chkm (mutator #t)
+        #t)
+  (chkm (mutator #f)
+        #f)
+  (chkm (mutator empty)
+        empty)
+  (chkm (mutator '1)
+        1)
+  (chkm (mutator '#t)
+        #t)
+  (chkm (mutator '#f)
+        #f)
+  (chkm (mutator '())
+        empty)
+  (chkm (mutator '(1 2))
+        (mcons 1 (mcons 2 empty)))
+  (chkm (mutator ((λ (x) x) 1))
+        1)
+  (chkm (mutator ((λ (x y) (+ x y)) 2 3))
+        5)
+  (chkm (mutator (let ([x 1]) x))
+        1)
+  (chkm (mutator (let* ([x 1] [y x]) y))
+        1)
+  (chkm (mutator (begin))
+        (void))
+  (chkm (mutator (begin 1))
+        1)
+  (chkm (mutator (begin 1 2))
+        2)
+  (chkm (mutator (let ([x (box 1)]) (set-box! x 2) (unbox x)))
+        2)
+  (chkm (mutator (letrec ([x 1]) x))
+        1)
+  (chkm (mutator (empty? '()))
+        #t)
+  (chkm (mutator (empty? 1))
+        #f)
+  (chkm (mutator (if #t 1 2))
+        1)
+  (chkm (mutator (if #f 1 2))
+        2)
+  (chkm (mutator (letrec ([len
                            (λ (l)
                              (if (empty? l)
                                0
                                (+ 1 (len (rest l)))))])
                    (len '(1 2 3))))
-  (check-mutator (define (len l)
+        3)
+  (chkm (mutator (define (len l)
                    (if (empty? l)
                      0
                      (+ 1 (len (rest l)))))
                  (len '(1 2 3)))
-  (check-mutator (define x 1)
+        3)
+  (chkm (mutator (define x 1)
                  x)
-  (check-mutator (define x 1)
+        1)
+  (chkm (mutator (define x 1)
                  x
                  (define y 2)
                  (+ x y))
-  (check-mutator (+ 1 2))
-  (check-mutator (- 1 2))
-  (check-mutator (* 1 2))
-  (check-mutator (/ 1 2))
-  (check-mutator (sub1 2))
-  (check-mutator (add1 2))
-  (check-mutator (and))
-  (check-mutator (and #t))
-  (check-mutator (and 1))
-  (check-mutator (and 1 2))
-  (check-mutator (or))
-  (check-mutator (or #t))
-  (check-mutator (or 1))
-  (check-mutator (or #f 1))
-  (check-mutator (or #f 1 2))
-  (check-mutator (or 1 2))
-  (check-mutator (or #f 2))
-  (check-mutator (cond))
-  (check-mutator (cond [else 1]))
-  (check-mutator (cond [#f 2] [else 1]))
-  (check-mutator (cond [2 1] [else 1]))
-  (check-mutator "string")
-  (check-mutator (string=? "string" "string"))
-  (check-mutator (string=? "string" "stringx"))
-  (check-mutator 'symbol)
-  (check-mutator (symbol=? 'symbol 'symbol))
-  (check-mutator (symbol=? 'symbol 'symbolx))
-  (check-mutator (= 1 2))
-  (check-mutator (= 1 1))
-  (check-mutator (equal? 1 1))
-  (check-mutator (equal? 1 2))
-  (check-mutator (equal? '(1 2) '(1)))
-  (check-mutator (equal? '(1 2) '(1 2)))
-  (check-mutator (printf "Hey there, ~a\n" "Jay"))
-  (chk #:exn (check-mutator (error 'test "Hey there, ~a\n" "Jay")) "Jay")
+        3)
+  (chkm (mutator (+ 1 2))
+        3)
+  (chkm (mutator (- 1 2))
+        -1)
+  (chkm (mutator (* 1 2))
+        2)
+  (chkm (mutator (/ 1 2))
+        1/2)
+  (chkm (mutator (sub1 2))
+        1)
+  (chkm (mutator (add1 2))
+        3)
+  (chkm (mutator (and))
+        #t)
+  (chkm (mutator (and #t))
+        #t)
+  (chkm (mutator (and 1))
+        1)
+  (chkm (mutator (and 1 2))
+        2)
+  (chkm (mutator (or))
+        #f)
+  (chkm (mutator (or #t))
+        #t)
+  (chkm (mutator (or 1))
+        1)
+  (chkm (mutator (or #f 1))
+        1)
+  (chkm (mutator (or #f 1 2))
+        1)
+  (chkm (mutator (or 1 2))
+        1)
+  (chkm (mutator (or #f 2))
+        2)
+  (chkm (mutator (cond))
+        (void))
+  (chkm (mutator (cond [else 1]))
+        1)
+  (chkm (mutator (cond [#f 2] [else 1]))
+        1)
+  (chkm (mutator (cond [2 1] [else 3]))
+        1)
+  (chkm (mutator "string")
+        "string")
+  (chkm (mutator (string=? "string" "string"))
+        #t)
+  (chkm (mutator (string=? "string" "stringx"))
+        #f)
+  (chkm (mutator 'symbol)
+        'symbol)
+  (chkm (mutator (symbol=? 'symbol 'symbol))
+        #t)
+  (chkm (mutator (symbol=? 'symbol 'symbolx))
+        #f)
+  (chkm (mutator (= 1 2))
+        #f)
+  (chkm (mutator (= 1 1))
+        #t)
+  (chkm (mutator (equal? 1 1))
+        #t)
+  (chkm (mutator (equal? 1 2))
+        #f)
+  (chkm (mutator (equal? '(1 2) '(1)))
+        #f)
+  (chkm (mutator (equal? '(1 2) '(1 2)))
+        #t)
+  (chkm (mutator (printf "Hey there, ~a\n" "Jay"))
+        (void))
   (chk #:exn
-       (check-mutator (define x (cons 1 2))
-                      (eq? x x))
+       (mutator-run racket-collector@
+                    (mutator (error 'test "Hey there, ~a\n" "Jay")))
+       "Jay")
+  (chk #:exn
+       (mutator-run racket-collector@
+                    (mutator (define x (cons 1 2))
+                             (eq? x x)))
        "contract violation")
-  (check-mutator (not #t))
-  (check-mutator (not #f))
-  (check-mutator (when #t 1))
-  (check-mutator (when #f 1))
-  (check-mutator (unless #t 1))
-  (check-mutator (unless #f 1))
-  (check-mutator (test (+ 1 2) 3))
-  (chk #:exn (check-mutator (test (+ 1 2) 4)) "not equal"))
+  (chkm (mutator (not #t))
+        #f)
+  (chkm (mutator (not #f))
+        #t)
+  (chkm (mutator (when #t 1))
+        1)
+  (chkm (mutator (when #f 1))
+        (void))
+  (chkm (mutator (unless #t 1))
+        (void))
+  (chkm (mutator (unless #f 1))
+        1)
+  (chkm (mutator (test (+ 1 2) 3))
+        (void))
+  (chk #:exn
+       (mutator-run racket-collector@
+                    (mutator (test (+ 1 2) 4)))
+       "not equal"))
