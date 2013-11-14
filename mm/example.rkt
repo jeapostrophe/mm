@@ -181,10 +181,8 @@
             [equal? mutator-equal?]
             [box? box?]
             [unbox box-deref]
-            [box box-allocate]
             [set-box! box-set!]
             [cons? cons?]
-            [cons cons-allocate]
             [first cons-first]
             [rest cons-rest]
             [set-first! con-set-first!]
@@ -201,10 +199,22 @@
              #:when r
              #:attr rewrite r))
 
+  (define mutator-cps-primitives
+    (id-set [box box-allocate]
+            [cons cons-allocate]))
+  (define-syntax-class mutator-cps-primitive
+    #:commit
+    #:attributes (rewrite)
+    (pattern x:id
+             #:do [(define r (dict-ref mutator-cps-primitives #'x #f))]
+             #:when r
+             #:attr rewrite r))
+
   (define-syntax-class mutator-keyword
     (pattern (~or (~literal if)
                   (~literal Mr.Gorbachev-unbox-these-identifiers!)
                   p:mutator-primitive p:mutator-lifted-primitive
+                  p:mutator-cps-primitive
                   (~literal λ)
                   (~literal empty) (~literal void) (~literal define)
                   m:mutator-macro)))
@@ -234,6 +244,10 @@
              #:attr stx
              (syntax/loc this-syntax
                (mutator-primitive 'prim.rewrite (list arg.stx ...))))
+    (pattern (prim:mutator-cps-primitive (~var arg (mutator-expr ubs)) ...)
+             #:attr stx
+             (syntax/loc this-syntax
+               (mutator-cps-primitive 'prim.rewrite (list arg.stx ...))))
     (pattern ((~literal λ) (x:id ...)
               (~var p (mutator-program ubs)))
              #:attr stx
@@ -294,92 +308,93 @@
 (define-syntax (mutator stx)
   (syntax-parse stx
     [(_ . p)
-     #:do [(pretty-print `(raw: ,(syntax->datum #'p)))]
+     ;;#:do [(pretty-print `(raw: ,(syntax->datum #'p)))]
      #:with ((~var m (mutator-program empty-id-table))) #'p
-     #:do [(pretty-print `(mutator: ,(syntax->datum #'m.stx)))]
+     ;;#:do [(pretty-print `(mutator: ,(syntax->datum #'m.stx)))]
      (syntax/loc stx
        m.stx)]))
 
-(struct mutator-atomic (value))
-(struct mutator-lifted-primitive (prim args))
-(struct mutator-primitive (prim-id args))
-(struct mutator-lambda (params body))
-(struct mutator-id (id))
-(struct mutator-apply (fun args))
-(struct mutator-if (test then else))
+(struct mutator-atomic (value) #:transparent)
+(struct mutator-primitive (prim-id args) #:transparent)
+(struct mutator-lifted-primitive (prim args) #:transparent)
+(struct mutator-cps-primitive (prim-id args) #:transparent)
+(struct mutator-lambda (params body) #:transparent)
+(struct mutator-id (id) #:transparent)
+(struct mutator-apply (fun args) #:transparent)
+(struct mutator-if (test then else) #:transparent)
+
+(struct closure-apply (k a))
 
 (require racket/unit)
 (define-signature collector^
-  (closure-apply
-   mutator-equal? address=?
+  (mutator-equal?
+   address=?
    ;;
    initialize
-   closure-allocate
+   closure? closure-allocate
    box? box-allocate box-deref box-set!
    atomic-allocate atomic-deref
    cons? cons-allocate cons-first cons-rest cons-set-first! cons-set-rest!))
 
-(require racket/match)
+(require racket/match
+         data/gvector)
 (define racket-collector@
   (unit
    (import) (export collector^)
 
-   ;; xxx allocate?
-   (define (address=? x y k)
-     (closure-apply k (= x y)))
-   ;; xxx allocate?
-   (define (mutator-equal? x y k)
+   (define (address=? x y)
+     (= x y))
+   (define (mutator-equal? x y)
      ;; xxx really should walk these pointers
-     (closure-apply k (equal? x y)))
+     (equal? x y))
+
+   (define HEAP (make-gvector))
 
    ;; Uses
-   (struct clo (code-ptr free-vars) #:transparent)
-
-   (define (closure-apply c . args)
-     (match c
-       [(? clo?)
-        (apply
-         (apply (clo-code-ptr c)
-                (clo-free-vars c))
-         args)]
-       [#f
-        (first args)]))
-
    (define (initialize)
      (void))
 
    ;; xxx make a separate "stack allocate" function for clarity?
-   (define (closure-allocate f fvs k)
-     (closure-apply k (clo f fvs)))
+   (define (closure? a)
+     (eq? 'closure (gvector-ref HEAP a)))
+   (define (closure-allocate k f fvs)
+     (define a (gvector-count HEAP))
+     (apply gvector-add! HEAP 'closure f fvs)
+     (closure-apply k a))
 
-   (define (atomic-allocate x k)
-     (closure-apply k x))
-   (define (atomic-deref x k)
-     (closure-apply k x))
+   (define (atomic-allocate k x)
+     (define a (gvector-count HEAP))
+     (gvector-add! HEAP 'atomic x)
+     (closure-apply k a))
+   (define (atomic-deref a)
+     (printf "ad: ~a ~v\n" a (gvector->list HEAP))
+     (gvector-ref HEAP (+ a 1)))
 
-   (define (cons? c k)
-     ;; xxx allocate?
-     (closure-apply k (mpair? c)))
-   (define (cons-first c k)
-     (closure-apply k (mcar c)))
-   (define (cons-rest c k)
-     (closure-apply k (mcdr c)))
-   (define (cons-allocate f r k)
-     (closure-apply k (mcons f r)))
-   (define (cons-set-first! c v k)
-     (closure-apply k (set-mcar! c v)))
-   (define (cons-set-rest! c v k)
-     (closure-apply k (set-mcdr! c v)))
+   (define (cons-allocate k f r)
+     (define a (gvector-count HEAP))
+     (gvector-add! HEAP 'cons f r)
+     (closure-apply k a))
+   (define (cons? a)
+     (eq? 'cons (gvector-ref HEAP (+ a 0))))
+   (define (cons-first a)
+     (gvector-ref HEAP (+ a 1)))
+   (define (cons-rest a)
+     (gvector-ref HEAP (+ a 2)))
+   (define (cons-set-first! a nf)
+     (gvector-set! HEAP (+ a 1) nf))
+   (define (cons-set-rest! a nf)
+     (gvector-set! HEAP (+ a 2) nf))
 
-   (define (box? b k)
-     ;; xxx allocate?
-     (closure-apply k (racket:box? b)))
-   (define (box-deref b k)
-     (closure-apply k (unbox b)))
-   (define (box-allocate v k)
-     (closure-apply k (box v)))
-   (define (box-set! b v k)
-     (closure-apply k (set-box! b v)))))
+   (define (box-allocate k b)
+     (define a (gvector-count HEAP))
+     (gvector-add! HEAP 'box b)
+     (closure-apply k a))
+   (define (box? a)
+     (eq? 'box (gvector-ref HEAP (+ a 0))))
+   (define (box-deref a)
+     (gvector-ref HEAP (+ a 1)))
+   (define (box-set! a nb)
+     (gvector-set! HEAP (+ a 1) nb))))
 
 (require racket/contract)
 (define heap-value?
@@ -398,144 +413,227 @@
             [(_ id ctc)
              (with-syntax ([in:id (format-id #'id "in:~a" #'id)])
                (syntax/loc stx
-                 (define id (contract ctc in:id 'pos 'neg))))]))
+                 (define id (contract ctc in:id 'collector 'mutator-internals))))]))
         (define-syntax-rule (defc* [id ctc] ...)
           (begin (defc id ctc) ...))
 
         (defc*
-          [closure-apply
-           (-> any/c
-               any)]
           [mutator-equal?
-           (-> heap-addr? heap-addr? cont?
-               any)]
+           (-> heap-addr? heap-addr?
+               boolean?)]
           [address=?
-           (-> heap-addr? heap-addr? cont?
-               any)]
+           (-> heap-addr? heap-addr?
+               boolean?)]
           [initialize
            (-> any)]
+          [closure?
+           (-> heap-addr?
+               boolean?)]
           [closure-allocate
-           (-> procedure? (listof heap-addr?) cont?
+           (-> cont? procedure? (listof heap-addr?)
                any)]
           [box?
-           (-> heap-addr? cont?
-               any)]
+           (-> heap-addr?
+               boolean?)]
           [box-allocate
-           (-> heap-addr? cont?
+           (-> cont? heap-addr?
                any)]
           [box-deref
-           (-> heap-addr? cont?
-               any)]
+           (-> heap-addr?
+               heap-addr?)]
           [box-set!
-           (-> heap-addr? heap-addr? cont?
-               any)]
+           (-> heap-addr? heap-addr?
+               void?)]
           [atomic-allocate
-           (-> heap-value? cont?
+           (-> cont? heap-value?
                any)]
           [atomic-deref
-           (-> heap-addr? cont?
-               any)]
+           (-> heap-addr?
+               heap-value?)]
           [cons?
-           (-> heap-addr? cont?
-               any)]
+           (-> heap-addr?
+               boolean?)]
           [cons-allocate
-           (-> heap-addr? heap-addr? cont?
+           (-> cont? heap-addr? heap-addr?
                any)]
           [cons-first
-           (-> heap-addr? cont?
-               any)]
+           (-> heap-addr?
+               heap-addr?)]
           [cons-rest
-           (-> heap-addr? cont?
-               any)]
+           (-> heap-addr?
+               heap-addr?)]
           [cons-set-first!
-           (-> heap-addr? heap-addr? cont?
-               any)]
+           (-> heap-addr? heap-addr?
+               void?)]
           [cons-set-rest!
-           (-> heap-addr? heap-addr? cont?
-               any)])))
+           (-> heap-addr? heap-addr?
+               void?)])))
 
 (define (mutator-run collector@ me)
-  (define-values/invoke-unit
-    (compound-unit
-     (import) (export CTC)
-     (link [([C : collector^]) collector@]
-           [([CTC : collector^]) contract-collector@ C]))
-    (import) (export collector^))
+  (let/ec esc
+    (define-values/invoke-unit
+      (compound-unit
+       (import) (export CTC)
+       (link [([C : collector^]) collector@]
+             [([CTC : collector^]) contract-collector@ C]))
+      (import) (export collector^))
 
-  (define (snoc l x)
-    (append l (list x)))
-  
-  (define (interp env me k)
-    (match me
-      [(mutator-atomic v)
-       (atomic-allocate v k)]
-      [(mutator-id id)
-       ;; xxx add good error message
-       (closure-apply k (dict-ref env id))]
-      [(mutator-lambda ids body)
-       ;; xxx look through body for free-ids
-       (closure-allocate
-        (λ free-vs
-          (define free-env
-            (for/fold ([free-env empty-env])
-                ([(k old-addr) (in-dict env)]
-                 [new-addr (in-list free-vs)])
-              (dict-set free-env k new-addr)))
-          (λ (vs dyn-k)
-            (define new-env
-              (for/fold ([new-env free-env])
-                  ([i (in-list ids)]
-                   [v (in-list vs)])
-                (dict-set new-env i v)))
-            (interp new-env body dyn-k)))
-        (for/list ([(k addr) (in-dict env)])
-          addr)
-        k)]
-      [(mutator-primitive prim-name arg-mes)
-       ;; xxx sequentialize this with continuation/closures
-       (apply
-        (match prim-name
-          ['cons-allocate cons-allocate]
-          ['cons-rest cons-rest]
-          ['cons-first cons-first]
-          ['cons-set-rest! cons-set-rest!]
-          ['cons-set-first! cons-set-first!]
-          ['box-allocate box-allocate]
-          ['box-set! box-set!]
-          ['box-deref box-deref]
-          ['address=? address=?]
-          ['mutator-equal? mutator-equal?]
-          [_
-           (error 'interp "Unknown primitive: ~e" prim-name)])
-        (snoc (map (λ (me) (interp env me k)) arg-mes)
-              k))]
-      [(mutator-lifted-primitive prim arg-mes)
-       ;; xxx sequentialize this with continuation/closures
-       (interp
-        env
-        (mutator-atomic
-         (apply
-          prim
-          (map (λ (addr) (atomic-deref addr k))
-               (map (λ (me) (interp env me k)) arg-mes))))
-        k)]
-      [(mutator-apply fun-me arg-mes)
-       ;; xxx sequentialize this with continuation/closures
-       (closure-apply (interp env fun-me k)
-                      (map (λ (me) (interp env me k)) arg-mes)
-                      k)]
-      [(mutator-if test true false)
-       ;; xxx sequentialize this with continuation/closures
-       (if (interp env test k)
-         (interp env true k)
-         (interp env false k))]))
+    (define (wrap-in-apply arg-mes inside)
+      (define-values (arg-ids args-with-ids new-args)
+        (for/fold ([arg-ids empty]
+                   [args-with-ids empty]
+                   [new-args empty])
+            ([arg (in-list arg-mes)])
+          (cond
+            [(mutator-id? arg)
+             (values arg-ids
+                     args-with-ids
+                     (cons arg new-args))]
+            [else
+             (define new-id (generate-temporary arg))
+             (values (cons new-id arg-ids)
+                     (cons arg args-with-ids)
+                     (cons (mutator-id new-id) new-args))])))
+      (mutator-apply
+       (mutator-lambda (reverse arg-ids)
+                       (inside (reverse new-args)))
+       (reverse args-with-ids)))
 
-  (local-require syntax/id-table
-                 racket/dict)
-  (define empty-env
-    (make-immutable-free-id-table empty))
+    (define (atomic-deref* id a)
+      (printf "atomic-deref* ~a ~a\n" id a)
+      (define v (atomic-deref a))
+      v)
 
-  (interp empty-env me #f))
+    (define (->racket a)
+      (cond
+        [(cons? a)
+         (cons (->racket (cons-first a))
+               (->racket (cons-rest a)))]
+        [(box? a)
+         (box (->racket (box-deref a)))]
+        [(closure? a)
+         (λ (x) x)]
+        [else
+         (atomic-deref a)]))
+
+    (eprintf "start\n")
+    (define (interp env me k)
+      (eprintf "interp ~v ~v ~v\n" env me k)
+      (define (lookup i)
+        (dict-ref env i
+                  (λ ()
+                    (error 'mutator "Unbound identifier: ~e" i))))
+      (define trampoline
+        (match me
+          [(mutator-atomic v)
+           (atomic-allocate k v)]
+          [(mutator-id id)
+           (closure-apply k (lookup id))]
+          [(mutator-lambda ids body)
+           ;; xxx look through body for free-ids
+           (closure-allocate
+            k
+            (λ free-vs
+              (define free-env
+                (for/fold ([free-env empty-env])
+                    ([(k old-addr) (in-dict env)]
+                     [new-addr (in-list free-vs)])
+                  (dict-set free-env k new-addr)))
+              (λ (vs dyn-k)
+                (define new-env
+                  (for/fold ([new-env free-env])
+                      ([i (in-list ids)]
+                       [v (in-list vs)])
+                    (dict-set new-env i v)))
+                (interp new-env body dyn-k)))
+            (for/list ([(k addr) (in-dict env)])
+              addr))]
+          [(mutator-primitive prim-name (and arg-mes (list (? mutator-id?) ...)))
+           (closure-apply
+            k
+            (apply
+             (match prim-name
+               ['cons-rest cons-rest]
+               ['cons-first cons-first]
+               ['cons-set-rest! cons-set-rest!]
+               ['cons-set-first! cons-set-first!]
+               ['box-set! box-set!]
+               ['box-deref box-deref]
+               ['address=? address=?]
+               ['mutator-equal? mutator-equal?]
+               [_
+                (error 'interp "Unknown primitive: ~e" prim-name)])
+             (map lookup arg-mes)))]
+          [(mutator-primitive prim-name arg-mes)
+           (interp env
+                   (wrap-in-apply
+                    arg-mes
+                    (λ (new-args)
+                      (mutator-primitive prim-name new-args)))
+                   k)]
+          [(mutator-cps-primitive prim-name (and arg-mes (list (? mutator-id?) ...)))
+           (apply
+            (match prim-name
+              ['cons-allocate cons-allocate]
+              [_
+               (error 'interp "Unknown CPS primitive: ~e" prim-name)])
+            k
+            (map lookup arg-mes))]
+          [(mutator-cps-primitive prim-name arg-mes)
+           (interp env
+                   (wrap-in-apply
+                    arg-mes
+                    (λ (new-args)
+                      (mutator-cps-primitive prim-name new-args)))
+                   k)]
+          [(mutator-lifted-primitive prim (and arg-mes (list (? mutator-id?) ...)))
+           (interp
+            env
+            (mutator-atomic
+             (apply
+              prim
+              (map (compose (curry atomic-deref* 'lifted-prim) lookup) arg-mes)))
+            k)]
+          [(mutator-lifted-primitive prim arg-mes)
+           (interp env
+                   (wrap-in-apply
+                    arg-mes
+                    (λ (new-args)
+                      (mutator-lifted-primitive prim new-args)))
+                   k)]
+          [(mutator-if (mutator-id test-id) true false)
+           (if (atomic-deref* 'if (lookup test-id))
+             (interp env true k)
+             (interp env false k))]
+          [(mutator-if test true false)
+           (define test-id (generate-temporary test))
+           (interp
+            env
+            (mutator-apply
+             (mutator-lambda (list test-id)
+                             (mutator-if (mutator-id test-id) true false))
+             (list test))
+            k)]
+          [(mutator-apply fun-me arg-mes)
+           ;; xxx sequentialize this with continuation/closures
+           (closure-apply (interp env fun-me #t)
+                          (map (λ (me) (interp env me #t)) arg-mes)
+                          k)]))
+      (match-define (closure-apply ck ca) trampoline)
+      (match ck
+        [#f
+         (esc (->racket ca))]
+        [_
+         (error 'xxx "~v" (vector ck ca))]))
+
+    (local-require syntax/id-table
+                   racket/function
+                   racket/dict
+                   racket/syntax)
+    (define empty-env
+      (make-immutable-free-id-table empty))
+
+    (interp empty-env me #f)))
 
 ;; xxx test first with gvector
 ;; xxx add parameterize interface to GC
