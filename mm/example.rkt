@@ -340,7 +340,7 @@
                (real-apply fun arg ... #,k)))
     ;; xxx this stops the infinite loop
     (pattern ((~literal cps-apply) ((~literal cps-lambda) (x:id) fun-body) arg)
-             #:do [(displayln (syntax->datum this-syntax))]
+             ;; #:do [(displayln (syntax->datum this-syntax))]
              #:attr stx
              (quasisyntax/loc this-syntax
                #;(closure-allocate
@@ -444,16 +444,16 @@
 (define-syntax (mutator stx)
   (syntax-parse stx
     [(_ . p)
-     #:do [(pretty-print `(raw: ,(syntax->datum #'p)))]
+     ;; #:do [(pretty-print `(raw: ,(syntax->datum #'p)))]
      #:with ((~var m (mutator-program empty-id-table))) #'p
-     #:do [(pretty-print `(mutator: ,(syntax->datum #'m.stx)))]
+     ;; #:do [(pretty-print `(mutator: ,(syntax->datum #'m.stx)))]
      #:with (~var c (cps-expr #'#f)) #'m.stx
-     #:do [(pretty-print `(cps: ,(syntax->datum #'c.stx)))]
+     ;; #:do [(pretty-print `(cps: ,(syntax->datum #'c.stx)))]
      #:with l:lift-expr #'c.stx
      #:with l-output #'(letrec l.lambdas
                          (initialize)
                          l.stx)
-     #:do [(pretty-print `(lift: ,(syntax->datum #'l-output)))]
+     ;; #:do [(pretty-print `(lift: ,(syntax->datum #'l-output)))]
      (syntax/loc stx
        (unit
         (import collector^) (export)
@@ -619,6 +619,28 @@
 
 (module+ test
   (require rackunit/chk)
+
+  ;; 1
+  (mutator-run racket-collector@
+               (unit (import collector^) (export)
+                     (initialize)
+                     (atomic-allocate 1 #f)))
+
+  ;; ((λ (x) x) 3)
+  (mutator-run racket-collector@
+               (unit (import collector^) (export)
+                     (initialize)                                         
+                     
+                     (closure-allocate (λ () (λ (x k) (closure-apply k x)))
+                                       empty
+                                       k1)
+
+                     (atomic-allocate 3 k2)
+
+                     (closure-allocate (λ))
+
+                     ))
+  (exit 0)
 
   (define-syntax (check-mutator stx)
     (syntax-parse stx
