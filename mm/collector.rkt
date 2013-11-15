@@ -14,8 +14,6 @@
 
 (define heap-value/c
   (or/c number? boolean? empty? void? string? symbol? code-ptr?))
-(define heap-addr?
-  exact-nonnegative-integer?)
 
 (define contract-collector@
   (unit (import (prefix in: collector^))
@@ -26,7 +24,7 @@
             [(_ id ctc)
              (with-syntax ([in:id (format-id #'id "in:~a" #'id)])
                (syntax/loc stx
-                 (define id (contract ctc in:id 
+                 (define id (contract ctc in:id
                                       'collector 'mutator-internals
                                       'id #f))))]))
         (define-syntax-rule (defc* [id ctc] ...)
@@ -108,10 +106,8 @@
                 (define i-export e-export)
                 ...))))]))
 
-;; xxx contracts
-(provide collector
-         return
-         code-ptr?
-         stack?
-         stack-bot?
-         stack-frame? stack-frame-env-addrs stack-frame-parent)
+(provide
+ collector
+ (except-out (all-from-out "runtime.rkt")
+             collector^
+             mutator-run))

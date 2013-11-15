@@ -4,6 +4,7 @@
          racket/list
          racket/match
          racket/unit
+         racket/contract
          "id-table.rkt"
          "ast.rkt")
 
@@ -20,6 +21,9 @@
    box? box-allocate box-deref box-set!
    atomic? atomic-allocate atomic-deref
    cons? cons-allocate cons-first cons-rest cons-set-first! cons-set-rest!))
+
+(define heap-addr?
+  exact-nonnegative-integer?)
 
 (define (address=? x y)
   (= x y))
@@ -95,9 +99,9 @@
        (atomic-deref a)]))
 
   (define (env-set label env i v)
-    ;;(unless (heap-addr? v)
-    ;;  (error 'env-set "~a: cannot set environment id ~a to non-heap-value: ~a\n"
-    ;;         label i v))
+    (unless (heap-addr? v)
+      (error 'env-set "~a: cannot set environment id ~a to non-heap-value: ~a\n"
+             label i v))
     (dict-set env i v))
 
   (define (interp env me k)
@@ -222,12 +226,41 @@
                 body
                 k))])))
 
-;; xxx contracts
-(provide collector^
-         return         
-         return?
-         mutator-run
-         code-ptr?
-         stack?
-         stack-bot?
-         stack-frame? stack-frame-env-addrs stack-frame-parent)
+(provide
+ collector^
+ (contract-out
+  [heap-addr?
+   (-> any/c
+       boolean?)]
+  [return?
+   (-> any/c
+       boolean?)]
+  [return
+   (-> stack? heap-addr?
+       return?)]
+  [code-ptr?
+   (-> any/c
+       boolean?)]
+  [stack?
+   (-> any/c
+       boolean?)]
+  [stack-bot?
+   (-> any/c
+       boolean?)]
+  [stack-frame?
+   (-> any/c
+       boolean?)]
+  [stack-frame-env-addrs
+   (-> stack-frame?
+       (vectorof heap-addr?))]
+  [stack-frame-parent
+   (-> stack-frame?
+       stack?)]
+  [mutator-run
+   (-> (unit/c (import) (export collector^))
+       mutator-expr?
+       (flat-rec-contract 
+        transferable
+        number? boolean? empty? void? string? symbol?
+        (cons/c transferable transferable)
+        (box/c transferable #:flat? #t)))]))
