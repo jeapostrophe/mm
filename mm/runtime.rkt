@@ -6,6 +6,7 @@
          racket/syntax
          racket/list
          racket/match
+         racket/unit
          "id-table.rkt"
          "ast.rkt"
          "compiler.rkt")
@@ -17,7 +18,6 @@
 (struct stack-bot stack ())
 (struct stack-frame stack (return-id return-body env-ids env-addrs parent))
 
-(require racket/unit)
 (define-signature collector^
   (initialize
    closure? closure-allocate closure-code-ptr closure-env-ref
@@ -25,82 +25,27 @@
    atomic? atomic-allocate atomic-deref
    cons? cons-allocate cons-first cons-rest cons-set-first! cons-set-rest!))
 
-(require racket/contract)
-(define heap-value/c
-  (or/c number? boolean? empty? void? string? symbol? code-ptr?))
-(define heap-addr?
-  exact-nonnegative-integer?)
-
-(define contract-collector@
-  (unit (import (prefix in: collector^))
-        (export collector^)
-
-        (define-syntax (defc stx)
-          (syntax-parse stx
-            [(_ id ctc)
-             (with-syntax ([in:id (format-id #'id "in:~a" #'id)])
-               (syntax/loc stx
-                 (define id (contract ctc in:id 'collector 'mutator-internals))))]))
-        (define-syntax-rule (defc* [id ctc] ...)
-          (begin (defc id ctc) ...))
-
-        (defc*
-          [initialize
-           (-> any)]
-          [closure-allocate
-           (-> stack? code-ptr? (vectorof heap-addr?)
-               return?)]
-          [closure?
-           (-> heap-addr?
-               boolean?)]
-          [closure-code-ptr
-           (-> heap-addr?
-               code-ptr?)]
-          [closure-env-ref
-           (-> heap-addr? exact-nonnegative-integer?
-               heap-addr?)]
-          [box-allocate
-           (-> stack? heap-addr?
-               return?)]
-          [box?
-           (-> heap-addr?
-               boolean?)]
-          [box-deref
-           (-> heap-addr?
-               heap-addr?)]
-          [box-set!
-           (-> heap-addr? heap-addr?
-               void?)]
-          [atomic-allocate
-           (-> stack? heap-value/c
-               return?)]
-          [atomic?
-           (-> heap-addr?
-               boolean?)]
-          [atomic-deref
-           (-> heap-addr?
-               heap-value/c)]
-          [cons-allocate
-           (-> stack? heap-addr? heap-addr?
-               return?)]
-          [cons?
-           (-> heap-addr?
-               boolean?)]
-          [cons-first
-           (-> heap-addr?
-               heap-addr?)]
-          [cons-rest
-           (-> heap-addr?
-               heap-addr?)]
-          [cons-set-first!
-           (-> heap-addr? heap-addr?
-               void?)]
-          [cons-set-rest!
-           (-> heap-addr? heap-addr?
-               void?)])))
-
 (define (address=? x y)
   (= x y))
+
+(define (mutator-free-vars me)
+  (id-set->list
+   (let loop ([me me])
+     (match me
+       [(mutator-atomic _)
+        empty-id-table]
+       [(mutator-primitive _ args)
+        (id-set-union (map loop args))]
+       [(mutator-lambda ids body)
+        (id-set-remove (loop body) ids)]
+       [(mutator-id id)
+        (list->id-set (list id))]
+       [(mutator-apply fun args)
+        (id-set-union (cons (loop fun) (map loop args)))]
+       [(mutator-apply1 fun arg)
+        (id-set-union (map loop (list fun arg)))]
+       [(mutator-if test then else)
+        (id-set-union (map loop (list test then else)))]))))
 
 (define (wrap-in-apply1 arg-mes inside)
   (define-values (arg-ids args-with-ids new-args)
@@ -284,6 +229,88 @@
 ;; xxx optional functions
 ;; xxx collector param over heap
 
+(require racket/contract)
+(define heap-value/c
+  (or/c number? boolean? empty? void? string? symbol? code-ptr?))
+(define heap-addr?
+  exact-nonnegative-integer?)
+
+(define contract-collector@
+  (unit (import (prefix in: collector^))
+        (export collector^)
+
+        (define-syntax (defc stx)
+          (syntax-parse stx
+            [(_ id ctc)
+             (with-syntax ([in:id (format-id #'id "in:~a" #'id)])
+               (syntax/loc stx
+                 (define id (contract ctc in:id 
+                                      'collector 'mutator-internals
+                                      'id #f))))]))
+        (define-syntax-rule (defc* [id ctc] ...)
+          (begin (defc id ctc) ...))
+
+        (defc*
+          [initialize
+           (-> any)]
+          [closure-allocate
+           (-> stack? code-ptr? (vectorof heap-addr?)
+               return?)]
+          [closure?
+           (-> heap-addr?
+               boolean?)]
+          [closure-code-ptr
+           (-> heap-addr?
+               code-ptr?)]
+          [closure-env-ref
+           (-> heap-addr? exact-nonnegative-integer?
+               heap-addr?)]
+          [box-allocate
+           (-> stack? heap-addr?
+               return?)]
+          [box?
+           (-> heap-addr?
+               boolean?)]
+          [box-deref
+           (-> heap-addr?
+               heap-addr?)]
+          [box-set!
+           (-> heap-addr? heap-addr?
+               void?)]
+          [atomic-allocate
+           (-> stack? heap-value/c
+               return?)]
+          [atomic?
+           (-> heap-addr?
+               boolean?)]
+          [atomic-deref
+           (-> heap-addr?
+               heap-value/c)]
+          [cons-allocate
+           (-> stack? heap-addr? heap-addr?
+               return?)]
+          [cons?
+           (-> heap-addr?
+               boolean?)]
+          [cons-first
+           (-> heap-addr?
+               heap-addr?)]
+          [cons-rest
+           (-> heap-addr?
+               heap-addr?)]
+          [cons-set-first!
+           (-> heap-addr? heap-addr?
+               void?)]
+          [cons-set-rest!
+           (-> heap-addr? heap-addr?
+               void?)])))
+
+(define (collector/contracts collector@)
+  (compound-unit
+   (import) (export CTC)
+   (link [([C : collector^]) collector@]
+         [([CTC : collector^]) contract-collector@ C])))
+
 (begin-for-syntax
   (require racket/unit-exptime))
 (define-syntax (collector stx)
@@ -295,16 +322,11 @@
              (for/list ([i (in-list ids)])
                (list i (datum->syntax stx (syntax->datum i)))))])
        (syntax/loc stx
-         (unit (import) (export collector^)
-               e ...
-               (define i-export e-export)
-               ...)))]))
-
-#;
-(compound-unit
-     (import) (export CTC)
-     (link [([C : collector^]) collector@]
-           [([CTC : collector^]) contract-collector@ C]))
+         (collector/contracts
+          (unit (import) (export collector^)
+                e ...
+                (define i-export e-export)
+                ...))))]))
 
 ;; xxx contracts
 (provide collector
