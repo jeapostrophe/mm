@@ -194,6 +194,7 @@
      ;; CPS
      [box box-allocate]
      [cons cons-allocate]))
+
   (define-syntax-class mutator-primitive
     #:commit
     #:attributes (rewrite)
@@ -290,24 +291,20 @@
              #:with (~var b (mutator-expr ubs)) #'e
              #:attr stx #'b.stx)))
 
-(begin-for-syntax
-  (require racket/pretty))
 (define-syntax (mutator stx)
   (syntax-parse stx
     [(_ . p)
-     ;;#:do [(pretty-print `(raw: ,(syntax->datum #'p)))]
      #:with ((~var m (mutator-program empty-id-table))) #'p
-     ;;#:do [(pretty-print `(mutator: ,(syntax->datum #'m.stx)))]
      (syntax/loc stx
        m.stx)]))
 
-(struct mutator-atomic (value) #:transparent)
-(struct mutator-primitive (prim-id args) #:transparent)
-(struct mutator-lambda (params body) #:transparent)
-(struct mutator-id (id) #:transparent)
-(struct mutator-apply (fun args) #:transparent)
-(struct mutator-apply1 (fun arg) #:transparent)
-(struct mutator-if (test then else) #:transparent)
+(struct mutator-atomic (value))
+(struct mutator-primitive (prim-id args))
+(struct mutator-lambda (params body))
+(struct mutator-id (id))
+(struct mutator-apply (fun args))
+(struct mutator-apply1 (fun arg))
+(struct mutator-if (test then else))
 
 (struct code-ptr (fv-count f))
 
@@ -323,69 +320,6 @@
    box? box-allocate box-deref box-set!
    atomic? atomic-allocate atomic-deref
    cons? cons-allocate cons-first cons-rest cons-set-first! cons-set-rest!))
-
-(require racket/match
-         data/gvector)
-(define racket-collector@
-  (unit
-   (import) (export collector^)
-
-   (define HEAP (make-gvector))
-   (define (gvector->disp g)
-     (for/list ([i (in-naturals)]
-                [e (in-gvector g)])
-       (cons i e)))
-
-   ;; Uses
-   (define (initialize)
-     (void))
-
-   ;; xxx make a separate "stack allocate" function for clarity?
-   (define (closure-allocate k f fvs)
-     (define a (gvector-count HEAP))
-     (apply gvector-add! HEAP 'closure f fvs)
-     (return k a))
-   (define (closure? a)
-     (eq? 'closure (gvector-ref HEAP a)))
-   (define (closure-code-ptr a)
-     (gvector-ref HEAP (+ a 1)))
-   (define (closure-env-ref a i)
-     (gvector-ref HEAP (+ a 2 i)))
-
-   (define (atomic-allocate k x)
-     (define a (gvector-count HEAP))
-     (gvector-add! HEAP 'atomic x)
-     (return k a))
-   (define (atomic? a)
-     (eq? 'atomic (gvector-ref HEAP (+ a 0))))
-   (define (atomic-deref a)
-     (gvector-ref HEAP (+ a 1)))
-
-   (define (cons-allocate k f r)
-     (define a (gvector-count HEAP))
-     (gvector-add! HEAP 'cons f r)
-     (return k a))
-   (define (cons? a)
-     (eq? 'cons (gvector-ref HEAP (+ a 0))))
-   (define (cons-first a)
-     (gvector-ref HEAP (+ a 1)))
-   (define (cons-rest a)
-     (gvector-ref HEAP (+ a 2)))
-   (define (cons-set-first! a nf)
-     (gvector-set! HEAP (+ a 1) nf))
-   (define (cons-set-rest! a nf)
-     (gvector-set! HEAP (+ a 2) nf))
-
-   (define (box-allocate k b)
-     (define a (gvector-count HEAP))
-     (gvector-add! HEAP 'box b)
-     (return k a))
-   (define (box? a)
-     (eq? 'box (gvector-ref HEAP (+ a 0))))
-   (define (box-deref a)
-     (gvector-ref HEAP (+ a 1)))
-   (define (box-set! a nb)
-     (gvector-set! HEAP (+ a 1) nb))))
 
 (require racket/contract)
 (define heap-value?
@@ -653,9 +587,70 @@
 
     (interp empty-env me (stack-bot))))
 
-;; xxx test first with gvector
-;; xxx add parameterize interface to GC
 ;; xxx optional functions
+
+(require racket/match
+         data/gvector)
+(define racket-collector@
+  (unit
+   (import) (export collector^)
+
+   (define HEAP (make-gvector))
+   (define (gvector->disp g)
+     (for/list ([i (in-naturals)]
+                [e (in-gvector g)])
+       (cons i e)))
+
+   ;; Uses
+   (define (initialize)
+     (void))
+
+   ;; xxx make a separate "stack allocate" function for clarity?
+   (define (closure-allocate k f fvs)
+     (define a (gvector-count HEAP))
+     (apply gvector-add! HEAP 'closure f fvs)
+     (return k a))
+   (define (closure? a)
+     (eq? 'closure (gvector-ref HEAP a)))
+   (define (closure-code-ptr a)
+     (gvector-ref HEAP (+ a 1)))
+   (define (closure-env-ref a i)
+     (gvector-ref HEAP (+ a 2 i)))
+
+   (define (atomic-allocate k x)
+     (define a (gvector-count HEAP))
+     (gvector-add! HEAP 'atomic x)
+     (return k a))
+   (define (atomic? a)
+     (eq? 'atomic (gvector-ref HEAP (+ a 0))))
+   (define (atomic-deref a)
+     (gvector-ref HEAP (+ a 1)))
+
+   (define (cons-allocate k f r)
+     (define a (gvector-count HEAP))
+     (gvector-add! HEAP 'cons f r)
+     (return k a))
+   (define (cons? a)
+     (eq? 'cons (gvector-ref HEAP (+ a 0))))
+   (define (cons-first a)
+     (gvector-ref HEAP (+ a 1)))
+   (define (cons-rest a)
+     (gvector-ref HEAP (+ a 2)))
+   (define (cons-set-first! a nf)
+     (gvector-set! HEAP (+ a 1) nf))
+   (define (cons-set-rest! a nf)
+     (gvector-set! HEAP (+ a 2) nf))
+
+   (define (box-allocate k b)
+     (define a (gvector-count HEAP))
+     (gvector-add! HEAP 'box b)
+     (return k a))
+   (define (box? a)
+     (eq? 'box (gvector-ref HEAP (+ a 0))))
+   (define (box-deref a)
+     (gvector-ref HEAP (+ a 1)))
+   (define (box-set! a nb)
+     (gvector-set! HEAP (+ a 1) nb))))
 
 (module+ test
   (require rackunit/chk)
