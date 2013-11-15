@@ -321,6 +321,7 @@
 (struct mutator-lambda (params body) #:transparent)
 (struct mutator-id (id) #:transparent)
 (struct mutator-apply (fun args) #:transparent)
+(struct mutator-apply1 (fun arg) #:transparent)
 (struct mutator-if (test then else) #:transparent)
 
 (struct closure-apply (k a))
@@ -494,10 +495,10 @@
              (values (cons new-id arg-ids)
                      (cons arg args-with-ids)
                      (cons (mutator-id new-id) new-args))])))
-      (mutator-apply
-       (mutator-lambda (reverse arg-ids)
-                       (inside (reverse new-args)))
-       (reverse args-with-ids)))
+      (for/fold ([me (inside (reverse new-args))])
+          ([ai (in-list arg-ids)]
+           [ae (in-list args-with-ids)])
+        (mutator-apply1 (mutator-lambda (list ai) me) ae)))
 
     (define (atomic-deref* id a)
       (printf "atomic-deref* ~a ~a\n" id a)
@@ -518,7 +519,7 @@
 
     (eprintf "start\n")
     (define (interp env me k)
-      (eprintf "interp ~v ~v ~v\n" env me k)
+      (eprintf "interp ~v ~v\n" me k)
       (define (lookup i)
         (dict-ref env i
                   (λ ()
@@ -529,6 +530,18 @@
            (atomic-allocate k v)]
           [(mutator-id id)
            (closure-apply k (lookup id))]
+          [(mutator-apply1 (mutator-lambda (list id) body) arg-me)
+           
+           (closure-allocate 
+            ...
+            (λ free-vs
+              (λ (lam-addr dyn-k)
+                ...))
+            ... vars mentioned in body ...)
+
+           (interp env arg-me k)
+
+           (error 'xxx)]
           [(mutator-lambda ids body)
            ;; xxx look through body for free-ids
            (closure-allocate
@@ -609,16 +622,23 @@
            (define test-id (generate-temporary test))
            (interp
             env
-            (mutator-apply
-             (mutator-lambda (list test-id)
-                             (mutator-if (mutator-id test-id) true false))
-             (list test))
+            (wrap-in-apply
+             (list test)
+             (λ (new-ids)
+               (mutator-if (first new-ids) true false)))
             k)]
-          [(mutator-apply fun-me arg-mes)
-           ;; xxx sequentialize this with continuation/closures
-           (closure-apply (interp env fun-me #t)
-                          (map (λ (me) (interp env me #t)) arg-mes)
-                          k)]))
+          [(mutator-apply (? mutator-id? fun-me) (list (? mutator-id? arg-mes) ...))
+           (closure-apply (lookup fun-me)
+                          (map lookup arg-mes)
+                          k)]
+          [(mutator-apply fun-me (list arg-mes ...))
+           (interp env
+                   (wrap-in-apply
+                    (cons fun-me arg-mes)
+                    (λ (new-ids)
+                      (mutator-apply (first new-ids)
+                                     (rest new-ids))))
+                   k)]))
       (match-define (closure-apply ck ca) trampoline)
       (match ck
         [#f
@@ -666,7 +686,7 @@
   (chkm (mutator '())
         empty)
   (chkm (mutator '(1 2))
-        (mcons 1 (mcons 2 empty)))
+        '(1 2))
   (chkm (mutator ((λ (x) x) 1))
         1)
   (chkm (mutator ((λ (x y) (+ x y)) 2 3))
