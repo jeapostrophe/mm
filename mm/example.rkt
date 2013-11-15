@@ -3,7 +3,7 @@
                      syntax/parse
                      racket/list
                      racket/syntax)
-         syntax/id-table
+         "id-table.rkt"
          racket/function
          racket/dict
          racket/syntax
@@ -15,27 +15,8 @@
 ;; Mutator Source Language (Scheme-like) compiler to use allocator
 (begin-for-syntax
   (require syntax/id-table
-           racket/dict)
-  (define empty-id-table (make-immutable-free-id-table empty))
-  (define-syntax-rule (id-set [k v] ...)
-    (make-immutable-free-id-table (list (cons #'k #'v) ...)))
-
-  (define (list->id-set ks)
-    (for/fold ([ids empty-id-table])
-        ([k (in-list (if (syntax? ks) (syntax->list ks) ks))])
-      (dict-set ids k #t)))
-  (define (id-set-union ids-l)
-    (for*/fold ([all-ids empty-id-table])
-        ([next-ids (in-list ids-l)]
-         [next-id (in-dict-keys next-ids)])
-      (dict-set all-ids next-id #t)))
-  (define (id-set->list ids)
-    (for/list ([k (in-dict-keys ids)])
-      k))
-  (define (id-set-remove ids lst)
-    (for/fold ([ids ids])
-        ([k (in-list (if (syntax? lst) (syntax->list lst) lst))])
-      (dict-remove ids k)))
+           racket/dict
+           "id-table.rkt")
 
   (define mutator-macros (make-free-id-table))
 
@@ -231,7 +212,7 @@
               (~var f (mutator-expr ubs)))
              #:attr stx
              (quasisyntax/loc this-syntax
-               (mutator-if c.stx t.stx f.stx)))    
+               (mutator-if c.stx t.stx f.stx)))
     (pattern (prim:mutator-primitive (~var arg (mutator-expr ubs)) ...)
              #:attr stx
              (syntax/loc this-syntax
@@ -306,6 +287,25 @@
 (struct mutator-apply1 (fun arg))
 (struct mutator-if (test then else))
 
+(define (mutator-free-vars me)
+  (id-set->list
+   (let loop ([me me])
+     (match me
+       [(mutator-atomic _)
+        empty-id-table]
+       [(mutator-primitive _ args)
+        (id-set-union (map loop args))]
+       [(mutator-lambda ids body)
+        (id-set-remove (loop body) ids)]
+       [(mutator-id id)
+        (list->id-set (list id))]
+       [(mutator-apply fun args)
+        (id-set-union (cons (loop fun) (map loop args)))]
+       [(mutator-apply1 fun arg)
+        (id-set-union (map loop (list fun arg)))]
+       [(mutator-if test then else)
+        (id-set-union (map loop (list test then else)))]))))
+
 (struct code-ptr (fv-count f))
 
 (struct return (k a))
@@ -344,7 +344,7 @@
           [initialize
            (-> any)]
           [closure-allocate
-           (-> stack? code-ptr? (listof heap-addr?)
+           (-> stack? code-ptr? (vectorof heap-addr?)
                return?)]
           [closure?
            (-> heap-addr?
@@ -463,38 +463,39 @@
         (dict-ref env i
                   (λ ()
                     (error 'mutator "Unbound identifier: ~e" i))))
+      (define (ids->addrs free-var-ids)
+        (for/vector ([k (in-list free-var-ids)])
+          (lookup k)))
       (define (env-set label env i v)
         (unless (heap-addr? v)
           (error 'env-set "~a: cannot set environment id ~a to non-heap-value: ~a\n"
                  label i v))
         (dict-set env i v))
-      (match-define
-       (return ck ca)
+      (define trampoline
        (match me
          [(mutator-atomic v)
           (atomic-allocate k v)]
          [(mutator-id id)
           (return k (lookup id))]
-         [(mutator-apply1 (mutator-lambda (list id) body) arg-me)
+         [(mutator-apply1 (and fun-me (mutator-lambda (list id) body)) arg-me)
+          (define free-var-ids (mutator-free-vars fun-me))
           (interp env arg-me
                   (stack-frame
                    id body
-                   (for/list ([k (in-dict-keys env)])
-                     k)
-                   (for/list ([v (in-dict-values env)])
-                     v)
+                   free-var-ids
+                   (ids->addrs free-var-ids)
                    k))]
-         [(mutator-lambda ids body)
-          ;; xxx look through body for free-ids
+         [(and fun-me (mutator-lambda ids body))
+          (define free-var-ids (mutator-free-vars fun-me))
           (closure-allocate
            k
            (code-ptr
-            (dict-count env)
-            (λ (free-vs)
+            (length free-var-ids)
+            (λ (free-var-addrs)
               (define free-env
-                (for/fold ([free-env empty-env])
-                    ([(k old-addr) (in-dict env)]
-                     [new-addr (in-list free-vs)])
+                (for/fold ([free-env empty-id-table])
+                    ([k (in-list free-var-ids)]
+                     [new-addr (in-list free-var-addrs)])
                   (env-set 'clo-free free-env k new-addr)))
               (λ (vs dyn-k)
                 (define new-env
@@ -503,15 +504,14 @@
                        [v (in-list vs)])
                     (env-set 'clo-new new-env i v)))
                 (interp new-env body dyn-k))))
-           (for/list ([(k addr) (in-dict env)])
-             addr))]
+           (ids->addrs free-var-ids))]
          [(mutator-apply (mutator-id fun-id) (list (mutator-id arg-ids) ...))
           (define fun-addr (lookup fun-id))
           (match-define (code-ptr fv-count f) (closure-code-ptr fun-addr))
-          (define fvs
+          (define fv-addrs
             (for/list ([i (in-range fv-count)])
               (closure-env-ref fun-addr i)))
-          ((f fvs) (map lookup arg-ids) k)]
+          ((f fv-addrs) (map lookup arg-ids) k)]
          [(mutator-if (mutator-id test-id) true false)
           (if (atomic-deref* 'if (lookup test-id))
             (interp env true k)
@@ -568,24 +568,21 @@
                      (mutator-apply (first new-ids)
                                     (rest new-ids))))
                   k)]))
-      (match ck
-        [(stack-bot)
+      (match trampoline
+        [(return (stack-bot) ca)
          (esc (->racket ca))]
-        [(stack-frame id body env-ids env-addrs k)
+        [(return (stack-frame id body env-ids env-addrs k) ca)
          (interp (env-set
                   'new-arg
-                  (for/fold ([new-env empty-env])
+                  (for/fold ([new-env empty-id-table])
                       ([i (in-list env-ids)]
-                       [a (in-list env-addrs)])
+                       [a (in-vector env-addrs)])
                     (env-set 'recover-env new-env i a))
                   id ca)
                  body
                  k)]))
 
-    (define empty-env
-      (make-immutable-free-id-table empty))
-
-    (interp empty-env me (stack-bot))))
+    (interp empty-id-table me (stack-bot))))
 
 ;; xxx optional functions
 
@@ -605,10 +602,11 @@
    (define (initialize)
      (void))
 
-   ;; xxx make a separate "stack allocate" function for clarity?
    (define (closure-allocate k f fvs)
      (define a (gvector-count HEAP))
-     (apply gvector-add! HEAP 'closure f fvs)
+     (gvector-add! HEAP 'closure f)
+     (for ([fv (in-vector fvs)])
+       (gvector-add! HEAP fv))
      (return k a))
    (define (closure? a)
      (eq? 'closure (gvector-ref HEAP a)))
@@ -641,7 +639,7 @@
    (define (cons-set-rest! a nf)
      (gvector-set! HEAP (+ a 2) nf))
 
-   (define (box-allocate k b)
+   (define (box-allocate k b)     
      (define a (gvector-count HEAP))
      (gvector-add! HEAP 'box b)
      (return k a))
