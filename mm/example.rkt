@@ -1,11 +1,8 @@
 #lang racket/base
 (require racket/bool
          racket/list
-         racket/match
          data/gvector
-         "compiler.rkt"
-         "runtime.rkt"
-         "collector.rkt")
+         mm)
 
 (define infinite-heap-collector@
   (collector
@@ -85,7 +82,7 @@
   (chkm (mutator #f)
         #f)
   (chkm (mutator empty)
-        empty)
+        '())
   (chkm (mutator '1)
         1)
   (chkm (mutator '#t)
@@ -93,7 +90,7 @@
   (chkm (mutator '#f)
         #f)
   (chkm (mutator '())
-        empty)
+        '())
   (chkm (mutator '(1 2))
         '(1 2))
   (chkm (mutator ((λ (x) x) 1))
