@@ -181,20 +181,25 @@
              #:when (dict-ref mutator-lifted-primitives #'x #f)))
 
   (define mutator-primitives
-    (id-set [eq? address=?]
-            [equal? mutator-equal?]
-            [box? box?]
-            [unbox box-deref]
-            [set-box! box-set!]
-            [cons? cons?]
-            [first cons-first]
-            [rest cons-rest]
-            [set-first! con-set-first!]
-            [set-rest! con-set-rest!]
-            [car cons-first]
-            [cdr cons-rest]
-            [set-car! con-set-first!]
-            [set-cdr! con-set-rest!]))
+    (id-set
+     ;; Normal
+     [eq? address=?]
+     [equal? mutator-equal?]
+     [box? box?]
+     [unbox box-deref]
+     [set-box! box-set!]
+     [cons? cons?]
+     [first cons-first]
+     [rest cons-rest]
+     [set-first! con-set-first!]
+     [set-rest! con-set-rest!]
+     [car cons-first]
+     [cdr cons-rest]
+     [set-car! con-set-first!]
+     [set-cdr! con-set-rest!]
+     ;; CPS
+     [box box-allocate]
+     [cons cons-allocate]))
   (define-syntax-class mutator-primitive
     #:commit
     #:attributes (rewrite)
@@ -203,22 +208,10 @@
              #:when r
              #:attr rewrite r))
 
-  (define mutator-cps-primitives
-    (id-set [box box-allocate]
-            [cons cons-allocate]))
-  (define-syntax-class mutator-cps-primitive
-    #:commit
-    #:attributes (rewrite)
-    (pattern x:id
-             #:do [(define r (dict-ref mutator-cps-primitives #'x #f))]
-             #:when r
-             #:attr rewrite r))
-
   (define-syntax-class mutator-keyword
     (pattern (~or (~literal if)
                   (~literal Mr.Gorbachev-unbox-these-identifiers!)
                   p:mutator-primitive p:mutator-lifted-primitive
-                  p:mutator-cps-primitive
                   (~literal λ)
                   (~literal empty) (~literal void) (~literal define)
                   m:mutator-macro)))
@@ -243,15 +236,11 @@
     (pattern (prim:mutator-lifted-primitive (~var arg (mutator-expr ubs)) ...)
              #:attr stx
              (syntax/loc this-syntax
-               (mutator-lifted-primitive prim (list arg.stx ...))))
+               (mutator-primitive prim (list arg.stx ...))))
     (pattern (prim:mutator-primitive (~var arg (mutator-expr ubs)) ...)
              #:attr stx
              (syntax/loc this-syntax
                (mutator-primitive 'prim.rewrite (list arg.stx ...))))
-    (pattern (prim:mutator-cps-primitive (~var arg (mutator-expr ubs)) ...)
-             #:attr stx
-             (syntax/loc this-syntax
-               (mutator-cps-primitive 'prim.rewrite (list arg.stx ...))))
     (pattern ((~literal λ) (x:id ...)
               (~var p (mutator-program ubs)))
              #:attr stx
@@ -320,8 +309,6 @@
 
 (struct mutator-atomic (value) #:transparent)
 (struct mutator-primitive (prim-id args) #:transparent)
-(struct mutator-lifted-primitive (prim args) #:transparent)
-(struct mutator-cps-primitive (prim-id args) #:transparent)
 (struct mutator-lambda (params body) #:transparent)
 (struct mutator-id (id) #:transparent)
 (struct mutator-apply (fun args) #:transparent)
@@ -603,40 +590,32 @@
             (interp env false k))]
          ;; Primitives
          [(mutator-primitive prim-name (list (mutator-id arg-ids) ...))
-          (define-values (prim alloc?)
+          (define-values (prim type)
             (match prim-name
-              ['cons-rest (values cons-rest #f)]
-              ['cons-first (values cons-first #f)]
-              ['cons-set-rest! (values cons-set-rest! #t)]
-              ['cons-set-first! (values cons-set-first! #t)]
-              ['box-set! (values box-set! #t)]
-              ['box-deref (values box-deref #f)]
-              ['address=? (values address=? #t)]
-              ['mutator-equal? (values mutator-equal? #t)]
+              ['cons-rest (values cons-rest 'addr)]
+              ['cons-first (values cons-first 'addr)]
+              ['cons-set-rest! (values cons-set-rest! 'value)]
+              ['cons-set-first! (values cons-set-first! 'value)]
+              ['box-set! (values box-set! 'value)]
+              ['box-deref (values box-deref 'addr)]
+              ['address=? (values address=? 'value)]
+              ['mutator-equal? (values mutator-equal? 'value)]
+              ['cons-allocate (values cons-allocate 'cps)]
+              ['box-allocate (values box-allocate 'cps)]
+              [(? procedure?) (values prim-name 'external)]
               [_
                (error 'interp "Unknown primitive: ~e" prim-name)]))
-          (define v
-            (apply prim (map lookup arg-ids)))
-          (if alloc?
-            (interp env (mutator-atomic v) k)
-            (return k v))]
-         [(mutator-cps-primitive prim-name (list (mutator-id arg-ids) ...))
-          (apply
-           (match prim-name
-             ['cons-allocate cons-allocate]
-             ['box-allocate box-allocate]
-             [_
-              (error 'interp "Unknown CPS primitive: ~e" prim-name)])
-           k
-           (map lookup arg-ids))]
-         [(mutator-lifted-primitive prim (list (mutator-id arg-ids) ...))
-          (interp
-           env
-           (mutator-atomic
-            (apply
-             prim
-             (map (compose (curry atomic-deref* 'lifted-prim) lookup) arg-ids)))
-           k)]
+          (define arg-addrs
+            (map lookup arg-ids))
+          (match type
+            ['external
+             (interp env (mutator-atomic (apply prim (map atomic-deref arg-addrs))) k)]
+            ['cps
+             (apply prim k arg-addrs)]
+            ['value
+             (interp env (mutator-atomic (apply prim arg-addrs)) k)]
+            ['addr
+             (return k (apply prim arg-addrs))])]
          ;; Sequencing
          [(mutator-primitive prim-name arg-mes)
           (interp env
@@ -644,20 +623,6 @@
                    arg-mes
                    (λ (new-args)
                      (mutator-primitive prim-name new-args)))
-                  k)]
-         [(mutator-cps-primitive prim-name arg-mes)
-          (interp env
-                  (wrap-in-apply
-                   arg-mes
-                   (λ (new-args)
-                     (mutator-cps-primitive prim-name new-args)))
-                  k)]
-         [(mutator-lifted-primitive prim arg-mes)
-          (interp env
-                  (wrap-in-apply
-                   arg-mes
-                   (λ (new-args)
-                     (mutator-lifted-primitive prim new-args)))
                   k)]
          [(mutator-if test true false)
           (interp
