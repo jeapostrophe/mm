@@ -8,6 +8,7 @@
          racket/contract
          "runtime.rkt")
 
+;; xxx heap gui
 ;; xxx optional functions
 ;; xxx collector param over heap
 
