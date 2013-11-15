@@ -27,7 +27,7 @@
    cons? cons-allocate cons-first cons-rest cons-set-first! cons-set-rest!))
 
 (require racket/contract)
-(define heap-value?
+(define heap-value/c
   (or/c number? boolean? empty? void? string? symbol? code-ptr?))
 (define heap-addr?
   exact-nonnegative-integer?)
@@ -73,14 +73,14 @@
            (-> heap-addr? heap-addr?
                void?)]
           [atomic-allocate
-           (-> stack? heap-value?
+           (-> stack? heap-value/c
                return?)]
           [atomic?
            (-> heap-addr?
                boolean?)]
           [atomic-deref
            (-> heap-addr?
-               heap-value?)]
+               heap-value/c)]
           [cons-allocate
            (-> stack? heap-addr? heap-addr?
                return?)]
