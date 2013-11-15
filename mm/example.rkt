@@ -4,7 +4,8 @@
          racket/match
          data/gvector
          "compiler.rkt"
-         "runtime.rkt")
+         "runtime.rkt"
+         "collector.rkt")
 
 (define infinite-heap-collector@
   (collector

@@ -1,15 +1,11 @@
 #lang racket/base
-(require (for-syntax racket/base
-                     syntax/parse
-                     racket/syntax)
-         racket/dict
+(require racket/dict
          racket/syntax
          racket/list
          racket/match
          racket/unit
          "id-table.rkt"
-         "ast.rkt"
-         "compiler.rkt")
+         "ast.rkt")
 
 (struct code-ptr (fv-count f))
 
@@ -99,9 +95,9 @@
        (atomic-deref a)]))
 
   (define (env-set label env i v)
-    (unless (heap-addr? v)
-      (error 'env-set "~a: cannot set environment id ~a to non-heap-value: ~a\n"
-             label i v))
+    ;;(unless (heap-addr? v)
+    ;;  (error 'env-set "~a: cannot set environment id ~a to non-heap-value: ~a\n"
+    ;;         label i v))
     (dict-set env i v))
 
   (define (interp env me k)
@@ -226,112 +222,12 @@
                 body
                 k))])))
 
-;; xxx optional functions
-;; xxx collector param over heap
-
-(require racket/contract)
-(define heap-value/c
-  (or/c number? boolean? empty? void? string? symbol? code-ptr?))
-(define heap-addr?
-  exact-nonnegative-integer?)
-
-(define contract-collector@
-  (unit (import (prefix in: collector^))
-        (export collector^)
-
-        (define-syntax (defc stx)
-          (syntax-parse stx
-            [(_ id ctc)
-             (with-syntax ([in:id (format-id #'id "in:~a" #'id)])
-               (syntax/loc stx
-                 (define id (contract ctc in:id 
-                                      'collector 'mutator-internals
-                                      'id #f))))]))
-        (define-syntax-rule (defc* [id ctc] ...)
-          (begin (defc id ctc) ...))
-
-        (defc*
-          [initialize
-           (-> any)]
-          [closure-allocate
-           (-> stack? code-ptr? (vectorof heap-addr?)
-               return?)]
-          [closure?
-           (-> heap-addr?
-               boolean?)]
-          [closure-code-ptr
-           (-> heap-addr?
-               code-ptr?)]
-          [closure-env-ref
-           (-> heap-addr? exact-nonnegative-integer?
-               heap-addr?)]
-          [box-allocate
-           (-> stack? heap-addr?
-               return?)]
-          [box?
-           (-> heap-addr?
-               boolean?)]
-          [box-deref
-           (-> heap-addr?
-               heap-addr?)]
-          [box-set!
-           (-> heap-addr? heap-addr?
-               void?)]
-          [atomic-allocate
-           (-> stack? heap-value/c
-               return?)]
-          [atomic?
-           (-> heap-addr?
-               boolean?)]
-          [atomic-deref
-           (-> heap-addr?
-               heap-value/c)]
-          [cons-allocate
-           (-> stack? heap-addr? heap-addr?
-               return?)]
-          [cons?
-           (-> heap-addr?
-               boolean?)]
-          [cons-first
-           (-> heap-addr?
-               heap-addr?)]
-          [cons-rest
-           (-> heap-addr?
-               heap-addr?)]
-          [cons-set-first!
-           (-> heap-addr? heap-addr?
-               void?)]
-          [cons-set-rest!
-           (-> heap-addr? heap-addr?
-               void?)])))
-
-(define (collector/contracts collector@)
-  (compound-unit
-   (import) (export CTC)
-   (link [([C : collector^]) collector@]
-         [([CTC : collector^]) contract-collector@ C])))
-
-(begin-for-syntax
-  (require racket/unit-exptime))
-(define-syntax (collector stx)
-  (syntax-case stx ()
-    [(_ e ...)
-     (with-syntax
-         ([([i-export e-export] ...)
-           (let-values ([(_1 ids _2 _3) (signature-members #'collector^ stx)])
-             (for/list ([i (in-list ids)])
-               (list i (datum->syntax stx (syntax->datum i)))))])
-       (syntax/loc stx
-         (collector/contracts
-          (unit (import) (export collector^)
-                e ...
-                (define i-export e-export)
-                ...))))]))
-
 ;; xxx contracts
-(provide collector
-         return
+(provide collector^
+         return         
+         return?
          mutator-run
          code-ptr?
+         stack?
          stack-bot?
          stack-frame? stack-frame-env-addrs stack-frame-parent)
