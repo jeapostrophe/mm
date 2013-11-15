@@ -124,11 +124,7 @@
     (mutator-apply1 (mutator-lambda (list ai) me) ae)))
 
 (define (mutator-run collector@ me)
-  (define-values/invoke-unit
-    (compound-unit
-     (import) (export CTC)
-     (link [([C : collector^]) collector@]
-           [([CTC : collector^]) contract-collector@ C]))
+  (define-values/invoke-unit collector@
     (import) (export collector^))
 
   (define (mutator-equal? x y)
@@ -303,6 +299,12 @@
                e ...
                (define i-export e-export)
                ...)))]))
+
+#;
+(compound-unit
+     (import) (export CTC)
+     (link [([C : collector^]) collector@]
+           [([CTC : collector^]) contract-collector@ C]))
 
 ;; xxx contracts
 (provide collector
