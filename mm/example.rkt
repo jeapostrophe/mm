@@ -174,12 +174,6 @@
   (define mutator-lifted-primitives
     (list->id-set #'(+ - * / add1 sub1 empty? even? odd? = < > <= >= zero?
                        not error printf symbol=? string=? number? boolean?)))
-
-  (define-syntax-class mutator-lifted-primitive
-    #:commit
-    (pattern x:id
-             #:when (dict-ref mutator-lifted-primitives #'x #f)))
-
   (define mutator-primitives
     (id-set
      ;; Normal
@@ -206,12 +200,16 @@
     (pattern x:id
              #:do [(define r (dict-ref mutator-primitives #'x #f))]
              #:when r
-             #:attr rewrite r))
+             #:attr rewrite #`(quote #,r))
+    (pattern x:id
+             #:do [(define r (dict-ref mutator-lifted-primitives #'x #f))]
+             #:when r
+             #:attr rewrite #'x))
 
   (define-syntax-class mutator-keyword
     (pattern (~or (~literal if)
                   (~literal Mr.Gorbachev-unbox-these-identifiers!)
-                  p:mutator-primitive p:mutator-lifted-primitive
+                  p:mutator-primitive
                   (~literal λ)
                   (~literal empty) (~literal void) (~literal define)
                   m:mutator-macro)))
@@ -232,15 +230,11 @@
               (~var f (mutator-expr ubs)))
              #:attr stx
              (quasisyntax/loc this-syntax
-               (mutator-if c.stx t.stx f.stx)))
-    (pattern (prim:mutator-lifted-primitive (~var arg (mutator-expr ubs)) ...)
-             #:attr stx
-             (syntax/loc this-syntax
-               (mutator-primitive prim (list arg.stx ...))))
+               (mutator-if c.stx t.stx f.stx)))    
     (pattern (prim:mutator-primitive (~var arg (mutator-expr ubs)) ...)
              #:attr stx
              (syntax/loc this-syntax
-               (mutator-primitive 'prim.rewrite (list arg.stx ...))))
+               (mutator-primitive prim.rewrite (list arg.stx ...))))
     (pattern ((~literal λ) (x:id ...)
               (~var p (mutator-program ubs)))
              #:attr stx
