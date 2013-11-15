@@ -244,18 +244,25 @@
              (syntax/loc this-syntax
                (mutator-apply fun.stx (list arg.stx ...)))))
 
+  (define-syntax-class mutator-define
+    #:commit
+    #:attributes (id body)
+    (pattern ((~literal define) x:id e)
+             #:attr id #'x
+             #:attr body #'e)
+    (pattern ((~literal define) (x:id arg:id ...) . e)
+             #:attr id #'x
+             #:attr body
+             (syntax/loc this-syntax
+               (λ (arg ...) . e))))
+
   (define-splicing-syntax-class (mutator-program ubs)
     #:commit
     #:attributes (stx)
-    (pattern (~seq ((~literal define) x:id e) p ...)
+    (pattern (~seq d:mutator-define ...+ p ...)
              #:with (~var b (mutator-expr ubs))
-             (syntax/loc #'x
-               (letrec ([x e]) p ...))
-             #:attr stx #'b.stx)
-    (pattern (~seq ((~literal define) (x:id arg:id ...) . e) p ...)
-             #:with ((~var b (mutator-program ubs)))
-             (syntax/loc #'x
-               ((define x (λ (arg ...) . e)) p ...))
+             (syntax/loc this-syntax
+               (letrec ([d.id d.body] ...) p ...))
              #:attr stx #'b.stx)
     (pattern (~seq e p ...+)
              #:with (~var b (mutator-expr ubs))

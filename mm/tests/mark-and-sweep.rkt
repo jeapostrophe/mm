@@ -191,7 +191,7 @@
                  (first x)))
        1)
   (chk (mutator-run
-        (mark-and-sweep@ 50)
+        (mark-and-sweep@ 60)
         (mutator (define (len l)
                    (if (empty? l)
                      0
@@ -206,4 +206,16 @@
                    '(1 2 3 4 5))
                  (+ (len x)
                     (sum x))))
-       (+ 5 (+ 1 2 3 4 5))))
+       (+ 5 (+ 1 2 3 4 5)))
+  (chk (mutator-run
+        (mark-and-sweep@ 30)
+        (mutator (define (my-even? x)
+                   (if (zero? x)
+                     #t
+                     (my-odd? (sub1 x))))
+                 (define (my-odd? x)
+                   (if (zero? x)
+                     #f
+                     (my-even? (sub1 x))))
+                 (my-even? 14)))
+       #t))
