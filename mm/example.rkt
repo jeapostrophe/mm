@@ -585,7 +585,7 @@
 
 (require racket/match
          data/gvector)
-(define racket-collector@
+(define infinite-heap-collector@
   (unit
    (import) (export collector^)
 
@@ -654,7 +654,7 @@
     (syntax-parse stx
       [(_ e v)
        (quasisyntax/loc stx
-         (chk #,(syntax/loc stx (mutator-run racket-collector@ e))
+         (chk #,(syntax/loc stx (mutator-run infinite-heap-collector@ e))
               v))]))
 
   (chkm (mutator 1)
@@ -791,7 +791,7 @@
   (chkm (mutator (printf "Hey there, ~a\n" "Jay"))
         (void))
   (chk #:exn
-       (mutator-run racket-collector@
+       (mutator-run infinite-heap-collector@
                     (mutator (error 'test "Hey there, ~a\n" "Jay")))
        "Jay")
   (chkm (mutator (define x (cons 1 2))
@@ -812,7 +812,7 @@
   (chkm (mutator (test (+ 1 2) 3))
         (void))
   (chk #:exn
-       (mutator-run racket-collector@
+       (mutator-run infinite-heap-collector@
                     (mutator (test (+ 1 2) 4)))
        "not equal")
   (chkm (mutator (unbox (box 1)))
