@@ -398,7 +398,7 @@
 (define (address=? x y)
   (= x y))
 
-(define (wrap-in-apply arg-mes inside)
+(define (wrap-in-apply1 arg-mes inside)
   (define-values (arg-ids args-with-ids new-args)
     (for/fold ([arg-ids empty]
                [args-with-ids empty]
@@ -441,10 +441,6 @@
       [else
        #f]))
 
-  (define (atomic-deref* id a)
-    (define v (atomic-deref a))
-    v)
-
   (define (->racket a)
     (cond
       [(cons? a)
@@ -453,7 +449,7 @@
       [(box? a)
        (box (->racket (box-deref a)))]
       [(closure? a)
-       (λ (x) x)]
+       (error 'mutator "Cannot export closures to Racket")]
       [else
        (atomic-deref a)]))
 
@@ -512,7 +508,7 @@
            (closure-env-ref fun-addr i)))
        ((f fv-addrs) (map lookup arg-ids) k)]
       [(mutator-if (mutator-id test-id) true false)
-       (if (atomic-deref* 'if (lookup test-id))
+       (if (atomic-deref (lookup test-id))
          (interp env true k)
          (interp env false k))]
       ;; Primitives
@@ -546,7 +542,7 @@
       ;; Sequencing
       [(mutator-primitive prim-name arg-mes)
        (interp env
-               (wrap-in-apply
+               (wrap-in-apply1
                 arg-mes
                 (λ (new-args)
                   (mutator-primitive prim-name new-args)))
@@ -554,14 +550,14 @@
       [(mutator-if test true false)
        (interp
         env
-        (wrap-in-apply
+        (wrap-in-apply1
          (list test)
          (λ (new-ids)
            (mutator-if (first new-ids) true false)))
         k)]
       [(mutator-apply fun-me (list arg-mes ...))
        (interp env
-               (wrap-in-apply
+               (wrap-in-apply1
                 (cons fun-me arg-mes)
                 (λ (new-ids)
                   (mutator-apply (first new-ids)
