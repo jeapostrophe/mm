@@ -16,8 +16,8 @@
 (struct stack-frame stack (return-id return-body env-ids env-addrs parent))
 
 (define-signature collector^
-  (initialize
-   closure? closure-allocate closure-code-ptr closure-env-ref
+  (closure?
+   closure-allocate closure-code-ptr closure-env-ref
    box? box-allocate box-deref box-set!
    atomic? atomic-allocate atomic-deref
    cons? cons-allocate cons-first cons-rest cons-set-first! cons-set-rest!))
@@ -259,7 +259,7 @@
   [mutator-run
    (-> (unit/c (import) (export collector^))
        mutator-expr?
-       (flat-rec-contract 
+       (flat-rec-contract
         transferable
         number? boolean? empty? void? string? symbol?
         (cons/c transferable transferable)

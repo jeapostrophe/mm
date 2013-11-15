@@ -1,7 +1,5 @@
 #lang racket/base
-(require racket/bool
-         racket/list
-         data/gvector
+(require data/gvector
          mm)
 
 (define infinite-heap-collector@
@@ -13,9 +11,6 @@
        (cons i e)))
 
    ;; Uses
-   (define (initialize)
-     (void))
-
    (define (closure-allocate k f fvs)
      (define a (gvector-count HEAP))
      (gvector-add! HEAP 'closure f)
@@ -66,6 +61,8 @@
 
 (module+ test
   (require (for-syntax racket/base)
+           racket/bool
+           racket/list
            rackunit/chk)
 
   (define-syntax (chkm stx)

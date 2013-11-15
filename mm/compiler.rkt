@@ -160,12 +160,12 @@
      [cons? cons?]
      [first cons-first]
      [rest cons-rest]
-     [set-first! con-set-first!]
-     [set-rest! con-set-rest!]
+     [set-first! cons-set-first!]
+     [set-rest! cons-set-rest!]
      [car cons-first]
      [cdr cons-rest]
-     [set-car! con-set-first!]
-     [set-cdr! con-set-rest!]
+     [set-car! cons-set-first!]
+     [set-cdr! cons-set-rest!]
      ;; CPS
      [box box-allocate]
      [cons cons-allocate]))

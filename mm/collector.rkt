@@ -31,8 +31,6 @@
           (begin (defc id ctc) ...))
 
         (defc*
-          [initialize
-           (-> any)]
           [closure-allocate
            (-> stack? code-ptr? (vectorof heap-addr?)
                return?)]
