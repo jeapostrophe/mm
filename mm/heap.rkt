@@ -16,6 +16,8 @@
              (vector-set! (heap-v h) (+ a i) v))
            ((heap-gui h))]))
 
+;; xxx move these to runtime so I can visualize the stack as well and
+;; integrate the stepper deeper
 (define visualize? (make-parameter #f))
 (define stepper? (make-parameter #f))
 (define-syntax-rule (visualize . e)

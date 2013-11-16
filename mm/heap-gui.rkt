@@ -466,6 +466,7 @@
             ;; take priority (important in the case that the mutator is
             ;; running a tight loop that changes the heap)
             #f))])
+      ;; xxx make this part of the GUI
       (when step?
         (read-char))
       (void))

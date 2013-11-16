@@ -8,6 +8,8 @@
          racket/contract
          "runtime.rkt")
 
+;; xxx add a oom exn
+;; xxx find the smallest size that a mutator works on
 ;; xxx optional functions
 
 (define heap-value/c
