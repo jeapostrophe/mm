@@ -8,6 +8,10 @@
          "id-table.rkt"
          "ast.rkt")
 
+;; xxx allow mutators that use manual [add free!], reference counting
+;; [add retain!/release!], and automatic referencing counting [notify
+;; program of stack push/pop?]
+
 (struct code-ptr (fv-count f))
 
 (struct return (k a))
