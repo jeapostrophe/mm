@@ -83,7 +83,7 @@
      (or (heap-allocate-or-fail req)
          (and (mark-and-sweep k v)
               (or (heap-allocate-or-fail req)
-                  (error 'heap-allocate "Heap is too full for ~a: ~a" req HEAP)))))
+                  (out-of-memory req HEAP)))))
    (define (heap-allocate-or-fail req)
      (for/or ([start (in-range 0 (- heap-size req -1))])
        (and (for/and ([block (in-range req)])

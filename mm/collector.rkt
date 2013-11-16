@@ -8,7 +8,6 @@
          racket/contract
          "runtime.rkt")
 
-;; xxx add a oom exn
 ;; xxx find the smallest size that a mutator works on
 ;; xxx optional functions
 
@@ -104,9 +103,33 @@
                 (define i-export e-export)
                 ...))))]))
 
+(struct exn:fail:mm:out-of-memory exn:fail ())
+(define (out-of-memory size mem)
+  (raise (exn:fail:mm:out-of-memory 
+          (format "Out of memory, cannot allocate ~a in ~e"
+                  size mem)
+          (current-continuation-marks))))
+
+;; xxx move
+(define (mutator-run/tight size->collector m)
+  (for/or ([i (in-naturals)])
+    (with-handlers ([exn:fail:mm:out-of-memory?
+                     (λ (x) #f)])
+      (mutator-run (size->collector i) m)
+      i)))
+
 (provide
+ mutator-run/tight
  heap-value/c
  collector
+ (contract-out
+  [exn:fail:mm:out-of-memory?
+   (-> any/c
+       boolean?)]
+  [out-of-memory
+   (-> exact-nonnegative-integer? any/c
+       ;; Doesn't return
+       (λ v #f))])
  (except-out (all-from-out "runtime.rkt")
              collector^
              mutator-run))

@@ -75,7 +75,7 @@
      (or (heap-allocate-or-fail req)
          (and (stop-and-copy k v)
               (or (heap-allocate-or-fail req)
-                  (error 'heap-allocate "Heap is too full for ~a: ~a" req TO)))))
+                  (out-of-memory req TO)))))
    (define (heap-allocate-or-fail req)
      (define new-ptr (+ heap-ptr req))
      (if (> new-ptr heap-size)
@@ -170,23 +170,33 @@
                  3 4
                  (first x)))
        1)
+  (define len+sum-m
+    (mutator (define (len l)
+               (if (empty? l)
+                 0
+                 (add1 (len (rest l)))))
+             (define (sum l)
+               (if (empty? l)
+                 0
+                 (+ (first l)
+                    (sum (rest l)))))
+
+             (define x
+               '(1 2 3 4 5))
+             (+ (len x)
+                (sum x))))
   (chk (mutator-run
         (stop-and-copy@ 60)
-        (mutator (define (len l)
-                   (if (empty? l)
-                     0
-                     (add1 (len (rest l)))))
-                 (define (sum l)
-                   (if (empty? l)
-                     0
-                     (+ (first l)
-                        (sum (rest l)))))
-
-                 (define x
-                   '(1 2 3 4 5))
-                 (+ (len x)
-                    (sum x))))
+        len+sum-m)
        (+ 5 (+ 1 2 3 4 5)))
+  (chk (mutator-run/tight
+        stop-and-copy@
+        len+sum-m)
+       49)
+  (chk (mutator-run/tight
+        stop-and-copy@
+        (mutator 1 2 3))
+       5)
   (visualize/stepper
    (chk (mutator-run
          (stop-and-copy@ 30)
