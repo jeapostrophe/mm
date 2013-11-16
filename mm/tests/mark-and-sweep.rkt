@@ -4,8 +4,7 @@
 
 (define (mark-and-sweep@ heap-size)
   (collector
-   (define FREE (gensym))
-   (define HEAP (make-vector heap-size FREE))
+   (define HEAP (make-heap heap-size))
 
    (define (mark-and-sweep k v)
      (mark k v)
@@ -21,23 +20,23 @@
      (for ([a (in-vector v)])
        (mark-addr a)))
    (define (mark-addr a)
-     (match (vector-ref HEAP a)
+     (match (HEAP a)
        [(or 'ATOMIC 'BOX 'CONS 'CLOSURE)
         (void)]
        ['atomic
-        (vector-set! HEAP (+ a 0) 'ATOMIC)]
+        (HEAP (+ a 0) 'ATOMIC)]
        ['box
-        (vector-set! HEAP (+ a 0) 'BOX)
-        (mark-addr (vector-ref HEAP (+ a 1)))]
+        (HEAP (+ a 0) 'BOX)
+        (mark-addr (HEAP (+ a 1)))]
        ['cons
-        (vector-set! HEAP (+ a 0) 'CONS)
-        (mark-addr (vector-ref HEAP (+ a 1)))
-        (mark-addr (vector-ref HEAP (+ a 2)))]
+        (HEAP (+ a 0) 'CONS)
+        (mark-addr (HEAP (+ a 1)))
+        (mark-addr (HEAP (+ a 2)))]
        ['closure
-        (vector-set! HEAP (+ a 0) 'CLOSURE)
-        (define how-many (vector-ref HEAP (+ a 2)))
+        (HEAP (+ a 0) 'CLOSURE)
+        (define how-many (HEAP (+ a 2)))
         (for ([i (in-range how-many)])
-          (mark-addr (vector-ref HEAP (+ a 3 i))))]
+          (mark-addr (HEAP (+ a 3 i))))]
        [tag
         (error 'mark-addr "Unknown tag ~e @ ~a in: ~a" tag a HEAP)]))
 
@@ -46,40 +45,34 @@
      (sweep-from 0))
    (define (sweep-from a)
      (when (< a heap-size)
-       (match (vector-ref HEAP a)
+       (match (HEAP a)
          ['closure
-          (vector-set! HEAP (+ a 0) FREE)
-          (vector-set! HEAP (+ a 1) FREE)
-          (define how-many (vector-ref HEAP (+ a 2)))
-          (vector-set! HEAP (+ a 2) FREE)
+          (define how-many (HEAP (+ a 2)))
+          (HEAP (+ a 0) FREE FREE FREE)
           (for ([i (in-range how-many)])
-            (vector-set! HEAP (+ a 3 i) FREE))
+            (HEAP (+ a 3 i) FREE))
           (sweep-from (+ a 3 how-many))]
          ['CLOSURE
-          (vector-set! HEAP (+ a 0) 'closure)
-          (define how-many (vector-ref HEAP (+ a 2)))
+          (define how-many (HEAP (+ a 2)))
+          (HEAP (+ a 0) 'closure)
           (sweep-from (+ a 3 how-many))]
          ['atomic
-          (vector-set! HEAP (+ a 0) FREE)
-          (vector-set! HEAP (+ a 1) FREE)
+          (HEAP (+ a 0) FREE FREE)
           (sweep-from (+ a 2))]
          ['ATOMIC
-          (vector-set! HEAP (+ a 0) 'atomic)
+          (HEAP (+ a 0) 'atomic)
           (sweep-from (+ a 2))]
          ['cons
-          (vector-set! HEAP (+ a 0) FREE)
-          (vector-set! HEAP (+ a 1) FREE)
-          (vector-set! HEAP (+ a 2) FREE)
+          (HEAP (+ a 0) FREE FREE FREE)
           (sweep-from (+ a 3))]
          ['CONS
-          (vector-set! HEAP (+ a 0) 'cons)
+          (HEAP (+ a 0) 'cons)
           (sweep-from (+ a 3))]
          ['box
-          (vector-set! HEAP (+ a 0) FREE)
-          (vector-set! HEAP (+ a 1) FREE)
+          (HEAP (+ a 0) FREE FREE)
           (sweep-from (+ a 2))]
          ['BOX
-          (vector-set! HEAP (+ a 0) 'box)
+          (HEAP (+ a 0) 'box)
           (sweep-from (+ a 2))]
          [(== FREE)
           (sweep-from (+ a 1))]
@@ -94,66 +87,60 @@
    (define (heap-allocate-or-fail req)
      (for/or ([start (in-range 0 (- heap-size req -1))])
        (and (for/and ([block (in-range req)])
-              (eq? FREE (vector-ref HEAP (+ start block))))
+              (eq? FREE (HEAP (+ start block))))
             start)))
 
    (define (closure-allocate k f fvs)
      (define how-many (vector-length fvs))
      (define a (heap-allocate (+ 3 how-many) k fvs))
-     (vector-set! HEAP (+ a 0) 'closure)
-     (vector-set! HEAP (+ a 1) f)
-     (vector-set! HEAP (+ a 2) how-many)
+     (HEAP (+ a 0) 'closure f how-many)
      (for ([i (in-naturals)]
            [fv (in-vector fvs)])
-       (vector-set! HEAP (+ a 3 i) fv))
+       (HEAP (+ a 3 i) fv))
      (return k a))
    (define (closure? a)
-     (eq? 'closure (vector-ref HEAP a)))
+     (eq? 'closure (HEAP a)))
    (define (closure-code-ptr a)
-     (vector-ref HEAP (+ a 1)))
+     (HEAP (+ a 1)))
    (define (closure-env-ref a i)
-     (vector-ref HEAP (+ a 3 i)))
+     (HEAP (+ a 3 i)))
 
    (define (atomic-allocate k x)
      (define a (heap-allocate 2 k (vector)))
-     (vector-set! HEAP (+ a 0) 'atomic)
-     (vector-set! HEAP (+ a 1) x)
+     (HEAP (+ a 0) 'atomic x)
      (return k a))
    (define (atomic? a)
-     (eq? 'atomic (vector-ref HEAP (+ a 0))))
+     (eq? 'atomic (HEAP (+ a 0))))
    (define (atomic-deref a)
-     (vector-ref HEAP (+ a 1)))
+     (HEAP (+ a 1)))
 
    (define (cons-allocate k f r)
      (define frv (vector f r))
      (define a (heap-allocate 3 k frv))
-     (vector-set! HEAP (+ a 0) 'cons)
-     (vector-set! HEAP (+ a 1) (vector-ref frv 0))
-     (vector-set! HEAP (+ a 2) (vector-ref frv 1))
+     (HEAP (+ a 0) 'cons (vector-ref frv 0) (vector-ref frv 1))
      (return k a))
    (define (cons? a)
-     (eq? 'cons (vector-ref HEAP (+ a 0))))
+     (eq? 'cons (HEAP (+ a 0))))
    (define (cons-first a)
-     (vector-ref HEAP (+ a 1)))
+     (HEAP (+ a 1)))
    (define (cons-rest a)
-     (vector-ref HEAP (+ a 2)))
+     (HEAP (+ a 2)))
    (define (cons-set-first! a nf)
-     (vector-set! HEAP (+ a 1) nf))
+     (HEAP (+ a 1) nf))
    (define (cons-set-rest! a nf)
-     (vector-set! HEAP (+ a 2) nf))
+     (HEAP (+ a 2) nf))
 
    (define (box-allocate k b)
      (define bv (vector b))
      (define a (heap-allocate 2 k bv))
-     (vector-set! HEAP (+ a 0) 'box)
-     (vector-set! HEAP (+ a 1) (vector-ref bv 0))
+     (HEAP (+ a 0) 'box (vector-ref bv 0))
      (return k a))
    (define (box? a)
-     (eq? 'box (vector-ref HEAP (+ a 0))))
+     (eq? 'box (HEAP (+ a 0))))
    (define (box-deref a)
-     (vector-ref HEAP (+ a 1)))
+     (HEAP (+ a 1)))
    (define (box-set! a nb)
-     (vector-set! HEAP (+ a 1) nb))))
+     (HEAP (+ a 1) nb))))
 
 (module+ test
   (require rackunit/chk
@@ -207,15 +194,16 @@
                  (+ (len x)
                     (sum x))))
        (+ 5 (+ 1 2 3 4 5)))
-  (chk (mutator-run
-        (mark-and-sweep@ 30)
-        (mutator (define (my-even? x)
-                   (if (zero? x)
-                     #t
-                     (my-odd? (sub1 x))))
-                 (define (my-odd? x)
-                   (if (zero? x)
-                     #f
-                     (my-even? (sub1 x))))
-                 (my-even? 14)))
-       #t))
+  (visualize/stepper
+   (chk (mutator-run
+         (mark-and-sweep@ 30)
+         (mutator (define (my-even? x)
+                    (if (zero? x)
+                      #t
+                      (my-odd? (sub1 x))))
+                  (define (my-odd? x)
+                    (if (zero? x)
+                      #f
+                      (my-even? (sub1 x))))
+                  (my-even? 14)))
+        #t)))

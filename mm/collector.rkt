@@ -8,9 +8,7 @@
          racket/contract
          "runtime.rkt")
 
-;; xxx heap gui
 ;; xxx optional functions
-;; xxx collector param over heap
 
 (define heap-value/c
   (or/c number? boolean? empty? void? string? symbol? code-ptr?))
@@ -105,6 +103,7 @@
                 ...))))]))
 
 (provide
+ heap-value/c
  collector
  (except-out (all-from-out "runtime.rkt")
              collector^
