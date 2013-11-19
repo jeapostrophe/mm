@@ -14,7 +14,7 @@
      (mark-vector v))
    (define (mark-stack k)
      (unless (stack-bot? k)
-       (mark-vector (stack-frame-env-addrs k))
+       (mark-vector (stack-frame-locals k))
        (mark-stack (stack-frame-parent k))))
    (define (mark-vector v)
      (for ([a (in-vector v)])

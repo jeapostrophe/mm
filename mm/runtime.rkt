@@ -17,8 +17,7 @@
 (struct return (k a))
 (struct stack ())
 (struct stack-bot stack ())
-;; xxx rename env-addrs to locals
-(struct stack-frame stack (return-id return-body env-ids env-addrs parent))
+(struct stack-frame stack (return-id return-body env-ids locals parent))
 
 (define-signature collector^
   (closure?
@@ -219,13 +218,13 @@
     (match trampoline
       [(return (stack-bot) ca)
        (->racket ca)]
-      [(return (stack-frame id body env-ids env-addrs k) ca)
+      [(return (stack-frame id body env-ids locals k) ca)
        (loop
         (interp (env-set
                  'new-arg
                  (for/fold ([new-env empty-id-table])
                      ([i (in-list env-ids)]
-                      [a (in-vector env-addrs)])
+                      [a (in-vector locals)])
                    (env-set 'recover-env new-env i a))
                  id ca)
                 body
@@ -260,7 +259,7 @@
   [stack-frame?
    (-> any/c
        boolean?)]
-  [stack-frame-env-addrs
+  [stack-frame-locals
    (-> stack-frame?
        (vectorof heap-addr?))]
   [stack-frame-parent

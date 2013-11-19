@@ -24,7 +24,7 @@
      (copy-vector v))
    (define (copy-stack k)
      (unless (stack-bot? k)
-       (copy-vector (stack-frame-env-addrs k))
+       (copy-vector (stack-frame-locals k))
        (copy-stack (stack-frame-parent k))))
    (define (copy-vector v)
      (for ([i (in-naturals)]
