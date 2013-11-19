@@ -17,6 +17,7 @@
 (struct return (k a))
 (struct stack ())
 (struct stack-bot stack ())
+;; xxx rename env-addrs to locals
 (struct stack-frame stack (return-id return-body env-ids env-addrs parent))
 
 (define-signature collector^
