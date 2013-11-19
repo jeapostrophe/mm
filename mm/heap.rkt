@@ -5,16 +5,7 @@
 
 (define FREE (gensym 'free))
 
-(struct heap (v gui)
-        #:property prop:procedure
-        (case-lambda
-          [(h a)
-           (vector-ref (heap-v h) a)]
-          [(h a . vs)
-           (for ([v (in-list vs)]
-                 [i (in-naturals)])
-             (vector-set! (heap-v h) (+ a i) v))
-           ((heap-gui h))]))
+(struct heap (v gui))
 
 ;; xxx move these to runtime so I can visualize the stack as well and
 ;; integrate the stepper deeper
@@ -35,19 +26,31 @@
       void))
   (heap v gui))
 
+(define (heap-ref h a)
+  (vector-ref (heap-v h) a))
+
+(define (heap-set! h a . vs)
+  (for ([v (in-list vs)]
+        [i (in-naturals)])
+    (vector-set! (heap-v h) (+ a i) v))
+  ((heap-gui h)))
+
 (provide
  visualize
  visualize/stepper
  (contract-out
-  [FREE 
+  [FREE
    symbol?]
   [heap?
    (-> any/c
        boolean?)]
+  [heap-ref
+   (-> heap? heap-addr?
+       heap-value/c)]
+  [heap-set!
+   (->* (heap? heap-addr?)
+        #:rest (listof heap-value/c)
+        void?)]
   [make-heap
    (-> exact-nonnegative-integer?
-       (case->
-        (-> heap-addr?
-            heap-value/c)
-        (-> heap-addr? #:rest (listof heap-value/c)
-            void?)))]))
+       heap?)]))
