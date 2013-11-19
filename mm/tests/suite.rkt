@@ -27,7 +27,8 @@
   (define cache (make-hasheq))
   (define (cached-size->collector size)
     (hash-ref! cache size (λ () (size->collector size))))
-  (for ([m (in-list ms)])
+  (for ([i (in-naturals)]
+        [m (in-list ms)])
     (m cached-size->collector)))
 
 (provide

@@ -104,17 +104,21 @@
 
 (struct exn:fail:mm:out-of-memory exn:fail ())
 (define (out-of-memory size mem)
-  (raise (exn:fail:mm:out-of-memory 
+  (raise (exn:fail:mm:out-of-memory
           (format "Out of memory, cannot allocate ~a in ~e"
                   size mem)
           (current-continuation-marks))))
 
 ;; xxx move
 (define (mutator-run/tight size->collector m)
-  (for/or ([i (in-naturals 2)])
-    (with-handlers ([exn:fail:mm:out-of-memory?
-                     (λ (x) #f)])
-      (mutator-run (size->collector (expt 2 i)) m))))
+  (cdr
+   (or
+    (for/or ([i (in-range 11)])
+      (with-handlers ([exn:fail:mm:out-of-memory?
+                       (λ (x) #f)])
+        (define size (expt 2 i))
+        (cons #f (mutator-run (size->collector size) m))))
+    (error 'mutator-run/tight "Cowardly refusing to use a ton of memory"))))
 
 (provide
  mutator-run/tight
