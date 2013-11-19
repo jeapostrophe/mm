@@ -231,9 +231,14 @@
                 body
                 k))])))
 
+(define collector/c
+  (unit/c (import) (export collector^)))
+
 (provide
  collector^
  (contract-out
+  [collector/c
+   contract?]
   [heap-addr?
    (-> any/c
        boolean?)]
@@ -262,7 +267,7 @@
    (-> stack-frame?
        stack?)]
   [mutator-run
-   (-> (unit/c (import) (export collector^))
+   (-> collector/c
        mutator-expr?
        (flat-rec-contract
         transferable

@@ -111,11 +111,10 @@
 
 ;; xxx move
 (define (mutator-run/tight size->collector m)
-  (for/or ([i (in-naturals)])
+  (for/or ([i (in-naturals 2)])
     (with-handlers ([exn:fail:mm:out-of-memory?
                      (λ (x) #f)])
-      (mutator-run (size->collector i) m)
-      i)))
+      (mutator-run (size->collector (expt 2 i)) m))))
 
 (provide
  mutator-run/tight

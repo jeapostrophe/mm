@@ -1,6 +1,5 @@
 an environment for doing memory management
 
-XXX Make a library of mutator tests
 XXX Adapt make-random-mutator
 XXX Clean up stop&copy to use one heap and do heap-splice
 XXX Implement BiBoP
