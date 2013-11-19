@@ -2,11 +2,13 @@
 (require racket/match
          mm)
 
-(define (stop-and-copy@ heap-size)
+(define (stop-and-copy@ actual-heap-size)
   (collector
    (define heap-ptr 0)
-   (define FROM (make-heap heap-size))
-   (define TO (make-heap heap-size))
+   (define HEAP (make-heap actual-heap-size))
+   (define effective-heap-size (quotient actual-heap-size 2))
+   (define FROM (heap-slice HEAP                   0 effective-heap-size))
+   (define   TO (heap-slice HEAP effective-heap-size effective-heap-size))
 
    (define-syntax-rule (swap! x y)
      (let ([tmp y])
@@ -17,7 +19,7 @@
      (swap! FROM TO)
      (set! heap-ptr 0)
      (copy k v)
-     (heap-set!n FROM 0 heap-size FREE))
+     (heap-set!n FROM 0 (sub1 effective-heap-size) FREE))
    (define (copy k v)
      (copy-stack k)
      (copy-vector v))
@@ -76,7 +78,7 @@
                   (out-of-memory req TO)))))
    (define (heap-allocate-or-fail req)
      (define new-ptr (+ heap-ptr req))
-     (if (> new-ptr heap-size)
+     (if (>= new-ptr effective-heap-size)
        #f
        (begin0 heap-ptr
                (set! heap-ptr new-ptr))))
@@ -131,3 +133,17 @@
      (heap-set! TO (+ a 1) nb))))
 
 (provide (all-defined-out))
+
+(module+ test
+  (visualize/stepper
+   (mutator-run
+    (stop-and-copy@ 40)
+    (mutator (define (my-even? x)
+               (if (zero? x)
+                 #t
+                 (my-odd? (sub1 x))))
+             (define (my-odd? x)
+               (if (zero? x)
+                 #f
+                 (my-even? (sub1 x))))
+             (my-even? 14)))))

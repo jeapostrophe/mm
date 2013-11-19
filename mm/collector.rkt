@@ -113,10 +113,10 @@
 (define (mutator-run/tight size->collector m)
   (cdr
    (or
-    (for/or ([i (in-range 11)])
+    (for/or ([i (in-range 10)])
       (with-handlers ([exn:fail:mm:out-of-memory?
                        (λ (x) #f)])
-        (define size (expt 2 i))
+        (define size (expt 2 (add1 i)))
         (cons #f (mutator-run (size->collector size) m))))
     (error 'mutator-run/tight "Cowardly refusing to use a ton of memory"))))
 

@@ -6,7 +6,9 @@
 
 (define FREE (gensym 'free))
 
-(struct heap (v gui))
+(struct heap ())
+(struct heap:raw heap (v gui))
+(struct heap:slice heap (parent from size))
 
 ;; xxx move these to runtime so I can visualize the stack as well and
 ;; integrate the stepper deeper
@@ -25,16 +27,48 @@
     (if (visualize?)
       (make-heap-gui (stepper?) FREE v)
       void))
-  (heap v gui))
+  (heap:raw v gui))
+
+(define (heap-slice parent from size)
+  (define psize (heap-size parent))
+  (unless (<= (+ from size) psize)
+    (error 'heap-slice
+           "Slice(~e:~e) is too big for parent(~e)"
+           from size
+           psize))
+  (heap:slice parent from size))
+
+(define heap-size
+  (match-lambda
+   [(heap:raw v _)
+    (vector-length v)]
+   [(heap:slice _ _ s)
+    s]))
 
 (define (heap-ref h a)
-  (vector-ref (heap-v h) a))
+  (define hsize (heap-size h))
+  (unless (< a hsize)
+    (error 'heap-ref "Address(~e) out of range(~e)" a hsize))
+  (match h
+    [(heap:raw v _)
+     (vector-ref v a)]
+    [(heap:slice p offset _)
+     (heap-ref p (+ offset a))]))
 
 (define (heap-set! h a . vs)
-  (for ([v (in-list vs)]
-        [i (in-naturals)])
-    (vector-set! (heap-v h) (+ a i) v))
-  ((heap-gui h)))
+  (define cnt (length vs))
+  (define hsize (heap-size h))
+  (unless (<= (+ a cnt) hsize)
+    (error 'heap-set! "Address(~e) + value span(~e:~e) out of range(~e)"
+           a cnt vs hsize))
+  (match h
+    [(heap:raw hv gui)
+     (for ([v (in-list vs)]
+           [i (in-naturals)])
+       (vector-set! hv (+ a i) v))
+     (gui)]
+    [(heap:slice p offset _)
+     (apply heap-set! p (+ offset a) vs)]))
 
 (define (heap-set!n h a cnt v)
   (apply heap-set! h a (for/list ([i (in-range cnt)]) v)))
@@ -45,7 +79,7 @@
     (match-lambda
      [(? list? l)
       l]
-     [(? vector? v) 
+     [(? vector? v)
       (vector->list v)]))
   (apply heap-set! h a
          (append (reverse rvs)
@@ -60,6 +94,15 @@
   [heap?
    (-> any/c
        boolean?)]
+  [make-heap
+   (-> exact-positive-integer?
+       heap?)]
+  [heap-slice
+   (-> heap? exact-nonnegative-integer? exact-positive-integer?
+       heap?)]
+  [heap-size
+   (-> heap?
+       exact-positive-integer?)]
   [heap-ref
    (-> heap? heap-addr?
        heap-value/c)]
@@ -74,7 +117,4 @@
         void?)]
   [heap-set!n
    (-> heap? heap-addr? exact-nonnegative-integer? heap-value/c
-       void?)]
-  [make-heap
-   (-> exact-nonnegative-integer?
-       heap?)]))
+       void?)]))

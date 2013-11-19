@@ -1,7 +1,6 @@
 an environment for doing memory management
 
 XXX Adapt make-random-mutator
-XXX Clean up stop&copy to use one heap and do heap-splice
 XXX Implement BiBoP
 XXX Implement generational collection
 XXX Implement concurrent collection (might require always giving k)
