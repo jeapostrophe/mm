@@ -1,5 +1,6 @@
 #lang racket/base
 (require racket/contract
+         racket/match
          "heap-gui.rkt"
          "collector.rkt")
 
@@ -35,6 +36,21 @@
     (vector-set! (heap-v h) (+ a i) v))
   ((heap-gui h)))
 
+(define (heap-set!n h a cnt v)
+  (apply heap-set! h a (for/list ([i (in-range cnt)]) v)))
+
+(define (heap-set!* h a . vs+)
+  (match-define (cons last rvs) (reverse vs+))
+  (define ->list
+    (match-lambda
+     [(? list? l)
+      l]
+     [(? vector? v) 
+      (vector->list v)]))
+  (apply heap-set! h a
+         (append (reverse rvs)
+                 (->list last))))
+
 (provide
  visualize
  visualize/stepper
@@ -51,6 +67,14 @@
    (->* (heap? heap-addr?)
         #:rest (listof heap-value/c)
         void?)]
+  [heap-set!*
+   (->* (heap? heap-addr?)
+        ;; xxx better contract
+        #:rest any/c
+        void?)]
+  [heap-set!n
+   (-> heap? heap-addr? exact-nonnegative-integer? heap-value/c
+       void?)]
   [make-heap
    (-> exact-nonnegative-integer?
        heap?)]))

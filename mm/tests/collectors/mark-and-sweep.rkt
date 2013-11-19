@@ -49,8 +49,7 @@
          ['closure
           (define how-many (heap-ref HEAP (+ a 2)))
           (heap-set! HEAP (+ a 0) FREE FREE FREE)
-          (for ([i (in-range how-many)])
-            (heap-set! HEAP (+ a 3 i) FREE))
+          (heap-set!n HEAP (+ a 3) how-many FREE)
           (sweep-from (+ a 3 how-many))]
          ['CLOSURE
           (define how-many (heap-ref HEAP (+ a 2)))
@@ -93,10 +92,7 @@
    (define (closure-allocate k f fvs)
      (define how-many (vector-length fvs))
      (define a (heap-allocate (+ 3 how-many) k fvs))
-     (heap-set! HEAP (+ a 0) 'closure f how-many)
-     (for ([i (in-naturals)]
-           [fv (in-vector fvs)])
-       (heap-set! HEAP (+ a 3 i) fv))
+     (heap-set!* HEAP (+ a 0) 'closure f how-many fvs)
      (return k a))
    (define (closure? a)
      (eq? 'closure (heap-ref HEAP a)))
@@ -117,7 +113,7 @@
    (define (cons-allocate k f r)
      (define frv (vector f r))
      (define a (heap-allocate 3 k frv))
-     (heap-set! HEAP (+ a 0) 'cons (vector-ref frv 0) (vector-ref frv 1))
+     (heap-set!* HEAP (+ a 0) 'cons frv)
      (return k a))
    (define (cons? a)
      (eq? 'cons (heap-ref HEAP (+ a 0))))
@@ -133,7 +129,7 @@
    (define (box-allocate k b)
      (define bv (vector b))
      (define a (heap-allocate 2 k bv))
-     (heap-set! HEAP (+ a 0) 'box (vector-ref bv 0))
+     (heap-set!* HEAP (+ a 0) 'box bv)
      (return k a))
    (define (box? a)
      (eq? 'box (heap-ref HEAP (+ a 0))))

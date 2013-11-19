@@ -17,8 +17,7 @@
      (swap! FROM TO)
      (set! heap-ptr 0)
      (copy k v)
-     (for ([i (in-range heap-size)])
-       (heap-set! FROM i FREE)))
+     (heap-set!n FROM 0 heap-size FREE))
    (define (copy k v)
      (copy-stack k)
      (copy-vector v))
@@ -35,7 +34,7 @@
      (match (heap-ref FROM a)
        [(? number? new-a)
         new-a]
-       ['atomic        
+       ['atomic
         (set! heap-ptr (+ heap-ptr 2))
         (heap-set! FROM a there)
         (heap-set! TO there 'atomic (heap-ref FROM (+ a 1)))
@@ -49,9 +48,9 @@
        ['cons
         (set! heap-ptr (+ heap-ptr 3))
         (heap-set! FROM a there)
-        (heap-set! TO there 'cons 
-            'not-copied-yet
-            'not-copied-yet)
+        (heap-set! TO there 'cons
+                   'not-copied-yet
+                   'not-copied-yet)
         (heap-set! TO (+ there 1) (copy-addr (heap-ref FROM (+ a 1))))
         (heap-set! TO (+ there 2) (copy-addr (heap-ref FROM (+ a 2))))
         there]
@@ -60,13 +59,12 @@
         (set! heap-ptr (+ heap-ptr 3 how-many))
         (heap-set! FROM a there)
         (heap-set! TO there 'closure
-            (heap-ref FROM (+ a 1))
-            how-many)
-        (for ([i (in-range how-many)])
-          (heap-set! TO (+ there 3 i) 'not-copied-yet))
+                   (heap-ref FROM (+ a 1))
+                   how-many)
+        (heap-set!n TO (+ there 3) how-many 'not-copied-yet)
         (for ([i (in-range how-many)])
           (heap-set! TO (+ there 3 i)
-              (copy-addr (heap-ref FROM (+ a 3 i)))))
+                     (copy-addr (heap-ref FROM (+ a 3 i)))))
         there]
        [tag
         (error 'copy-addr "Unknown tag ~e @ ~a in: ~a" tag a FROM)]))
@@ -86,10 +84,7 @@
    (define (closure-allocate k f fvs)
      (define how-many (vector-length fvs))
      (define a (heap-allocate (+ 3 how-many) k fvs))
-     (heap-set! TO (+ a 0) 'closure f how-many)
-     (for ([i (in-naturals)]
-           [fv (in-vector fvs)])
-       (heap-set! TO (+ a 3 i) fv))
+     (heap-set!* TO (+ a 0) 'closure f how-many fvs)
      (return k a))
    (define (closure? a)
      (eq? 'closure (heap-ref TO a)))
@@ -110,7 +105,7 @@
    (define (cons-allocate k f r)
      (define frv (vector f r))
      (define a (heap-allocate 3 k frv))
-     (heap-set! TO (+ a 0) 'cons (vector-ref frv 0) (vector-ref frv 1))
+     (heap-set!* TO (+ a 0) 'cons frv)
      (return k a))
    (define (cons? a)
      (eq? 'cons (heap-ref TO (+ a 0))))
@@ -126,7 +121,7 @@
    (define (box-allocate k b)
      (define bv (vector b))
      (define a (heap-allocate 2 k bv))
-     (heap-set! TO (+ a 0) 'box (vector-ref bv 0))
+     (heap-set!* TO (+ a 0) 'box bv)
      (return k a))
    (define (box? a)
      (eq? 'box (heap-ref TO (+ a 0))))
